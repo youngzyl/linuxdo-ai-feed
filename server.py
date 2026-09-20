@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from config import FIXTURE_DIR, PUBLIC_DIR
 from store import now_iso
+import learn as learn_mod
 
 MAX_BODY = 64 * 1024
 
@@ -141,6 +142,26 @@ def make_handler(app: App):
                         app.store.save()
                         return self.json_response(200, {"queue": ids})
                     return self.json_response(200, {"queue": app.store.queue()})
+                if path == "/api/feedback":
+                    if method == "POST":
+                        payload = self.read_json_body()
+                        try:
+                            tid = int(payload.get("id"))
+                        except (TypeError, ValueError):
+                            return self.error_json(400, "id required")
+                        vote = (payload.get("vote") or "").strip().lower()
+                        note = payload.get("note") or ""
+                        if vote == "clear":
+                            learn_mod.remove(app.store, tid)
+                            return self.json_response(200, {"ok": True, "cleared": tid, "counts": learn_mod.counts(app.store)})
+                        try:
+                            entry = learn_mod.record(app.store, tid, vote, note)
+                        except ValueError as exc:
+                            return self.error_json(400, str(exc))
+                        except KeyError as exc:
+                            return self.error_json(404, str(exc))
+                        return self.json_response(200, {"ok": True, "entry": entry, "counts": learn_mod.counts(app.store)})
+                    return self.json_response(200, {"feedback": learn_mod.all_votes(app.store), "counts": learn_mod.counts(app.store)})
                 if path == "/api/refresh" and method == "POST":
                     result = app.trigger_refresh()
                     payload = app.store.api_payload(cfg=app.cfg, uptime_s=app.uptime())

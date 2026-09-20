@@ -65,7 +65,10 @@
   </div>
 </div>
 
+<div class="drawer-scrim" id="scrim" hidden></div>
+
 <aside class="drawer" id="drawer" role="dialog" aria-labelledby="d-title" aria-modal="false" hidden>
+  <div class="drawer__handle" aria-hidden="true"></div>
   <div class="drawer__head">
     <p class="label" id="d-state">预览</p>
     <button class="btn btn--ghost" type="button" id="d-close" aria-label="关闭预览">关闭</button>
@@ -80,8 +83,14 @@
   <div class="drawer__body" id="d-body"></div>
   <div class="drawer__actions">
     <button class="btn" type="button" id="d-queue">移到待读</button>
+    <button class="btn" type="button" id="d-keep">想看 · 教筛选器</button>
+    <button class="btn btn--ghost" type="button" id="d-skip">不感兴趣</button>
     <a class="btn btn--ghost" id="d-link" href="https://linux.do" target="_blank" rel="noopener">原文链接</a>
   </div>
+  <p class="drawer__taste" id="d-taste" hidden></p>
+  <label class="drawer__note" for="d-note">为什么（可选，下一轮筛选会读到）
+    <input id="d-note" type="text" maxlength="80" placeholder="比如：中转站广告 / 架构分析我要" autocomplete="off">
+  </label>
 </aside>
 
 <script src="app.js" defer></script>

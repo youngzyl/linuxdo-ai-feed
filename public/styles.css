@@ -301,6 +301,11 @@ body {
     gap: 0 var(--gap-x);
     padding: 0 0 var(--s4);
   }
+  /* pin each notice to its own column: `hidden` siblings drop out of
+     auto-placement, which would slide the queue notice into column 1 */
+  .empties > .empty:nth-child(1) { grid-column: 1; }
+  .empties > .empty:nth-child(2) { grid-column: 2; }
+  .empties > .empty:nth-child(3) { grid-column: 3; }
 }
 
 @media (max-width: 899px) {
@@ -327,12 +332,20 @@ body {
 .cell {
   min-width: 0;
   border-top: 1px solid var(--rule);
+  contain: layout style;
 }
 
-.cell--empty { pointer-events: none; }
+.cell--empty {
+  pointer-events: none;
+  /* marker slots carry no text: offscreen ones skip layout/paint entirely.
+     Item cells keep real (unsized) containment so row heights stay exact. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 78px;
+}
 
 /* empty slot: deliberate placeholder, same offset in every column so rows keep
-   their height and nothing shifts between columns */
+   their height and nothing shifts between columns. The hairline spans half the
+   slot so the hole reads as a hole, not a stray mark. */
 .slot__mark {
   display: flex;
   align-items: center;
@@ -342,7 +355,8 @@ body {
 }
 .slot__mark::before {
   content: "";
-  width: 20px;
+  width: 52%;
+  max-width: 240px;
   height: 1px;
   background: var(--hair);
 }
@@ -352,6 +366,15 @@ body {
   height: 3px;
   border-radius: 50%;
   background: var(--hair);
+}
+
+/* a slot that just emptied fades in with its row — opacity only, never a
+   movement of its own, so markers never animate independently of the row */
+.cell--appearing { animation: slotIn var(--anim) linear both; }
+
+@keyframes slotIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .board.is-compact .cell--empty {
@@ -377,6 +400,7 @@ body {
   padding: var(--row-pad-y) var(--s1) var(--row-pad-y) 0;
   min-height: 44px;
   cursor: pointer;
+  contain: layout style;
 }
 
 .item__title {
@@ -490,6 +514,9 @@ body {
 .item--rejected { opacity: .68; }
 .item--rejected .item__title { font-weight: 400; color: var(--fg-soft); }
 
+/* will-change only while a FLIP is actually running */
+.item.is-flipping { will-change: transform; }
+
 .item:hover .item__title,
 .item:focus-visible .item__title { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
 .item:hover { opacity: 1; }
@@ -560,6 +587,11 @@ body {
 }
 .drawer.is-open { opacity: 1; transform: none; }
 
+/* drag-handle visual + tap-outside scrim are mobile affordances only: on
+   desktop the panel must never cover the board */
+.drawer__handle { display: none; }
+.drawer-scrim { display: none; }
+
 .drawer__head {
   display: flex;
   align-items: center;
@@ -598,12 +630,48 @@ body {
   color: var(--fg-soft);
 }
 
+/* no OP body was fetched: say so quietly instead of showing a blank panel */
+.drawer__body.is-empty {
+  font: 13px/1.6 var(--sans);
+  color: var(--dim);
+  white-space: normal;
+}
+
 .drawer__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--s2);
   margin-top: var(--s5);
   padding-top: var(--s4);
   border-top: 1px solid var(--rule);
+}
+
+.drawer__taste {
+  margin: var(--s3) 0 0;
+  font: 12.5px/1.5 var(--sans);
+  color: var(--dim);
+}
+
+.drawer__note {
+  display: block;
+  margin-top: var(--s3);
+  font: 11px/1.4 var(--sans);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dim-2);
+}
+
+.drawer__note input {
+  display: block;
+  width: 100%;
+  margin-top: var(--s2);
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.4 var(--sans);
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 @media (min-width: 900px) {
@@ -616,15 +684,44 @@ body {
 }
 
 @media (max-width: 899px) {
+  /* bottom sheet: pinned to the viewport bottom, capped at 80vh; the body
+     scrolls, the action row stays reachable at the bottom of the sheet */
   .drawer {
+    top: auto;
     left: 0;
     right: 0;
     bottom: 0;
     max-height: 80vh;
     border-left: 0;
     border-top: 1px solid var(--rule);
+    border-radius: 14px 14px 0 0;
     padding: var(--s4) var(--s4) calc(var(--s5) + env(safe-area-inset-bottom));
     transform: translateY(16px);
+    display: flex;
+    flex-direction: column;
+  }
+  .drawer__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+  }
+  .drawer__actions { margin-top: auto; }
+  /* drag-handle visual — the sheet itself stays a plain scroll container */
+  .drawer__handle {
+    display: block;
+    width: 40px;
+    height: 4px;
+    margin: 0 auto var(--s3);
+    border-radius: 2px;
+    background: var(--hair);
+  }
+  /* tap anywhere outside the sheet to close */
+  .drawer-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: rgba(20, 19, 18, .3);
   }
   .btn { min-height: 44px; padding: var(--s3) var(--s4); }
   .item__title { font-size: 16px; }

@@ -99,7 +99,7 @@ class Store:
         self.failure_log = Path(failure_log)
         self.memory_failures = memory_failures
         self.lock = threading.RLock()
-        self.data: dict = {"version": VERSION, "topics": {}, "queue": [], "health": default_health()}
+        self.data: dict = {"version": VERSION, "topics": {}, "queue": [], "feedback": [], "health": default_health()}
         self.failures: list[dict] = []
         self.started_at = time.time()
         self.load()
@@ -115,6 +115,7 @@ class Store:
                 if isinstance(blob, dict):
                     self.data["topics"] = blob.get("topics") or {}
                     self.data["queue"] = [int(x) for x in (blob.get("queue") or [])]
+                    self.data["feedback"] = list(blob.get("feedback") or [])
                     health = default_health()
                     health.update(blob.get("health") or {})
                     for section in ("fetch", "filter"):
@@ -357,6 +358,11 @@ class Store:
             },
             "counts": counts,
             "queue": list(self.data["queue"]),
+            "feedback": {
+                "keep": sum(1 for r in (self.data.get("feedback") or []) if r.get("vote") == "keep"),
+                "skip": sum(1 for r in (self.data.get("feedback") or []) if r.get("vote") == "skip"),
+                "total": len(self.data.get("feedback") or []),
+            },
             "uptime_s": round(uptime_s, 1),
             "topics": topics,
         }

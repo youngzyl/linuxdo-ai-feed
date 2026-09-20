@@ -52,6 +52,7 @@ Environment variables:
 | GET | `/api/state` | full payload: topics with `state` (`pending`/`picked`/`rejected`) + filter verdicts |
 | POST | `/api/refresh` | kick a cycle now (returns immediately) |
 | GET/POST | `/api/queue` | the right column (`{"queue":[id,...]}` / `{"add":id}` / `{"remove":id}`) |
+| GET/POST | `/api/feedback` | preference votes: `{"id":123,"vote":"keep"|"skip","note":"..."}` or `{"id":123,"vote":"clear"}`. Next filter cycle injects the most recent keep/skip examples into the prompt. |
 | GET | `/health` | status, counters, `attention.needed` |
 | GET | `/metrics` | Prometheus text |
 | GET | `/api/failures?n=20` | failure journal (newest first) — the RCA feed |

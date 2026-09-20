@@ -340,6 +340,73 @@ class TestFilterParsing(unittest.TestCase):
         self.assertIn("no API key", summary["error"])
 
 
+class TestLearn(TempStore):
+    def test_keep_rescues_a_rejected_topic(self):
+        import learn as learn_mod
+
+        self.store.upsert_topics([{"id": 1, "title": "rescued post", "created_at": "2026-09-20T00:00:00Z"}])
+        self.store.set_verdict(1, {"valuable": False, "score": 20, "reason": "r", "summary": "s", "model": "m", "prompt_version": "v1"})
+        entry = learn_mod.record(self.store, 1, "keep", "这个方向我要看")
+        self.assertEqual(entry["vote"], "keep")
+        self.assertEqual(self.store.get(1)["state"], "picked")
+        self.assertTrue(self.store.get(1).get("rescued"))
+        self.assertEqual(learn_mod.counts(self.store), {"keep": 1, "skip": 0, "total": 1})
+
+    def test_skip_drops_a_pick_and_removes_it_from_queue(self):
+        import learn as learn_mod
+
+        self.store.upsert_topics([{"id": 2, "title": "promo", "created_at": "2026-09-20T00:00:00Z"}])
+        self.store.set_verdict(2, {"valuable": True, "score": 70, "reason": "r", "summary": "s", "model": "m", "prompt_version": "v1"})
+        self.store.queue_add(2)
+        learn_mod.record(self.store, 2, "skip", "又是中转站")
+        self.assertEqual(self.store.get(2)["state"], "rejected")
+        self.assertEqual(self.store.queue(), [])
+        self.assertEqual(learn_mod.counts(self.store)["skip"], 1)
+
+    def test_second_vote_replaces_the_first(self):
+        import learn as learn_mod
+
+        self.store.upsert_topics([{"id": 3, "title": "t", "created_at": "2026-09-20T00:00:00Z"}])
+        learn_mod.record(self.store, 3, "keep")
+        learn_mod.record(self.store, 3, "skip")
+        self.assertEqual(learn_mod.counts(self.store), {"keep": 0, "skip": 1, "total": 1})
+
+    def test_invalid_vote_is_rejected(self):
+        import learn as learn_mod
+
+        self.store.upsert_topics([{"id": 4, "title": "t"}])
+        with self.assertRaises(ValueError):
+            learn_mod.record(self.store, 4, "maybe")
+        with self.assertRaises(KeyError):
+            learn_mod.record(self.store, 99, "keep")
+
+    def test_examples_are_injected_into_the_user_prompt(self):
+        import learn as learn_mod
+        import filter as filter_mod
+
+        self.store.upsert_topics(
+            [
+                {"id": 10, "title": "我想看的深度帖"},
+                {"id": 11, "title": "中转站广告"},
+            ]
+        )
+        learn_mod.record(self.store, 10, "keep", "架构分析我要")
+        learn_mod.record(self.store, 11, "skip", "推广")
+        text = learn_mod.render_examples(learn_mod.examples_for_prompt(self.store))
+        self.assertIn("我想看的深度帖", text)
+        self.assertIn("中转站广告", text)
+        self.assertIn("架构分析我要", text)
+        prompt = filter_mod.build_user_prompt_with_taste([{"id": 12, "title": "新帖"}], text, 50)
+        self.assertTrue(prompt.startswith("读者口味"))
+        self.assertIn("[1] 标题: 新帖", prompt)
+
+    def test_empty_examples_do_not_change_the_prompt(self):
+        import filter as filter_mod
+
+        prompt = filter_mod.build_user_prompt_with_taste([{"id": 1, "title": "x"}], "", 50)
+        self.assertTrue(prompt.startswith("请筛选以下帖子"))
+
+
 # ------------------------------------------------------------------------ store
 class TestCycleLock(unittest.TestCase):
     def test_second_holder_is_refused(self):

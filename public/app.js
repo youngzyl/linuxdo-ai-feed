@@ -13,6 +13,7 @@
     refresh: '/api/refresh',
     health: '/health',
     queue: '/api/queue',
+    feedback: '/api/feedback',
     fixtureBase: 'fixtures/state.sample.json',
     fixtureNext: 'fixtures/state.sample.next.json',
     lsQueue: 'linuxdo-ai.queue',
@@ -20,7 +21,10 @@
     lsDensity: 'linuxdo-ai.density',
     hoverMs: 250,
     closeMs: 180,
-    animMs: 300
+    animMs: 300,     /* FLIP duration (brief: 280-340ms) */
+    staggerMs: 14,   /* per-batch delay: a whole-board FLIP must not start at once */
+    maxGroups: 12,   /* ⇒ at most 12 batches, ≤154ms extra, never a JS-driven frame loop */
+    fadeMs: 160      /* prefers-reduced-motion: opacity only, no movement */
   };
 
   const params = new URLSearchParams(location.search);
@@ -28,6 +32,8 @@
   const DEV_HEALTH = params.get('health');
   const DEV_SLOW = Number(params.get('slow')) || 0; /* dev: hold the fetch to show skeletons */
   const DEV_FAIL = params.get('fail') === '1';      /* dev: force the /api/state error state */
+  const DEV_AUTO = Number(params.get('auto')) || 0; /* dev: auto-press 刷新 N times (animation demo) */
+  const OPEN_ID = Number(params.get('open')) || 0;  /* dev: open the preview for this topic id */
 
   const $ = (sel, root) => (root || document).querySelector(sel);
 
@@ -53,6 +59,7 @@
     density: $('#density'),
     tabs: $('#tabs'),
     drawer: $('#drawer'),
+    scrim: $('#scrim'),
     dState: $('#d-state'),
     dTitle: $('#d-title'),
     dMeta: $('#d-meta'),
@@ -63,6 +70,10 @@
     dSummary: $('#d-summary'),
     dBody: $('#d-body'),
     dQueue: $('#d-queue'),
+    dKeep: $('#d-keep'),
+    dSkip: $('#d-skip'),
+    dNote: $('#d-note'),
+    dTaste: $('#d-taste'),
     dLink: $('#d-link'),
     dClose: $('#d-close')
   };
@@ -72,8 +83,11 @@
     topics: new Map(),
     seen: new Set(),
     queue: new Set(),
+    votes: new Map(), /* id -> 'keep' | 'skip' */
     density: 'gap',
     tab: 'all',
+    occupied: new Set(), /* 'row:col' slots filled by the previous render */
+    flipLog: [],         /* dev-only: batch summary of each FLIP run */
     openId: null,
     pinned: false,
     first: true,
@@ -294,23 +308,23 @@
     time.textContent = relTime(t.created_at);
     time.title = absTime(t.created_at);
 
-    const bits = [
-      t.author || '匿名',
-      time,
-      '回复 ' + (t.reply_count || 0),
-      '浏览 ' + (t.views || 0)
-    ];
+    const bits = [t.author || '匿名', time, '回复 ' + (t.reply_count || 0)];
+    /* mobile keeps the meta to one line: views move to the drawer */
+    if (isDesktop()) bits.push('浏览 ' + (t.views || 0));
     appendBits(text, bits);
     meta.appendChild(text);
 
-    /* classification group is never truncated — the +N fold stays readable */
-    const tags = document.createElement('span');
-    tags.className = 'item__meta-tags';
-    const tagBits = [t.category || '未分类'];
-    if (tg.text) tagBits.push(tg.text);
-    appendBits(tags, tagBits);
-    if (tg.extra > 0) tags.title = '标签 · 共 ' + tg.all.length + ' 个：' + tg.all.join('、');
-    meta.appendChild(tags);
+    /* classification group is never truncated — the +N fold stays readable.
+       Mobile drops it (and views) so author · time · replies always fit. */
+    if (isDesktop()) {
+      const tags = document.createElement('span');
+      tags.className = 'item__meta-tags';
+      const tagBits = [t.category || '未分类'];
+      if (tg.text) tagBits.push(tg.text);
+      appendBits(tags, tagBits);
+      if (tg.extra > 0) tags.title = '标签 · 共 ' + tg.all.length + ' 个：' + tg.all.join('、');
+      meta.appendChild(tags);
+    }
     return meta;
   }
 
@@ -377,7 +391,7 @@
     return cell;
   }
 
-  function buildCell(row, col, topic) {
+  function buildCell(row, col, topic, appearing) {
     const cell = document.createElement('div');
     cell.className = 'cell cell--c' + col;
     /* Auto-placement in a 3-column grid keeps row i aligned; do not set
@@ -387,10 +401,11 @@
       cell.appendChild(buildItem(topic));
     } else {
       cell.classList.add('cell--empty');
+      if (appearing) cell.classList.add('cell--appearing');
       cell.setAttribute('aria-hidden', 'true');
-      const hair = document.createElement('span');
-      hair.className = 'slot__mark';
-      cell.appendChild(hair);
+      const mark = document.createElement('span');
+      mark.className = 'slot__mark';
+      cell.appendChild(mark);
     }
     return cell;
   }
@@ -404,24 +419,43 @@
     return map;
   }
 
-  function animate(node, dx, dy, fade) {
-    if (reduced()) return;
+  /* FLIP primitive — transform/opacity only, delayed by `delay` ms.
+     prefers-reduced-motion: no movement at all, an entering item only fades. */
+  function animate(node, dx, dy, fade, delay) {
+    const wait = delay || 0;
+    if (reduced()) {
+      if (!fade) return;
+      node.style.transition = 'none';
+      node.style.opacity = '0';
+      void node.offsetWidth;
+      requestAnimationFrame(() => {
+        node.style.transition = 'opacity ' + CFG.fadeMs + 'ms linear';
+        node.style.opacity = '1';
+        const done = () => { node.style.transition = ''; node.style.opacity = ''; };
+        node.addEventListener('transitionend', done, { once: true });
+        window.setTimeout(done, CFG.fadeMs + 120);
+      });
+      return;
+    }
+
+    node.classList.add('is-flipping');
     node.style.transition = 'none';
     node.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
     if (fade) node.style.opacity = '0';
     void node.offsetWidth;
     requestAnimationFrame(() => {
-      node.style.transition = 'transform ' + CFG.animMs + 'ms cubic-bezier(.2,.7,.2,1)' +
-        (fade ? ', opacity ' + CFG.animMs + 'ms linear' : '');
+      node.style.transition = 'transform ' + CFG.animMs + 'ms cubic-bezier(.2,.7,.2,1) ' + wait + 'ms' +
+        (fade ? ', opacity ' + CFG.animMs + 'ms linear ' + wait + 'ms' : '');
       node.style.transform = 'translate(0,0)';
       if (fade) node.style.opacity = '1';
       const done = () => {
         node.style.transition = '';
         node.style.transform = '';
         node.style.opacity = '';
+        node.classList.remove('is-flipping');
       };
       node.addEventListener('transitionend', done, { once: true });
-      window.setTimeout(done, CFG.animMs + 140);
+      window.setTimeout(done, CFG.animMs + wait + 140);
     });
   }
 
@@ -469,13 +503,21 @@
 
   function render(prevRects, newIds) {
     S.rows = (S.data ? S.data.topics : []).map((t, i) => ({ t: t, row: i + 1 }));
-
     el.board.dataset.tab = S.tab;
     /* gap: one shared grid, every topic sits at its own row index and the other
        two cells of that row stay as empty slots. compact: three independent
        stacks, so surviving items pull up per column. */
     const compact = isDesktop() && S.density === 'compact';
     el.board.classList.toggle('is-compact', compact);
+
+    /* slots that were filled last render and are empty now fade in with their
+       row (opacity only) instead of popping */
+    const prevOccupied = S.occupied || new Set();
+    const occupied = new Set();
+    S.rows.forEach((r) => occupied.add(r.row + ':' + colOf(r.t)));
+    const appearing = new Set();
+    prevOccupied.forEach((key) => { if (!occupied.has(key)) appearing.add(key); });
+    S.occupied = occupied;
 
     const frag = document.createDocumentFragment();
     if (compact) {
@@ -487,29 +529,62 @@
       }
     } else {
       S.rows.forEach((r) => {
-        for (let col = 1; col <= 3; col++) frag.appendChild(buildCell(r.row, col, r.t));
+        for (let col = 1; col <= 3; col++) {
+          frag.appendChild(buildCell(r.row, col, r.t, appearing.has(r.row + ':' + col)));
+        }
       });
     }
     el.board.replaceChildren(frag);
 
-    if (prevRects && !reduced()) {
-      el.board.querySelectorAll('.item').forEach((node) => {
-        const prev = prevRects.get(Number(node.dataset.id));
-        const isNew = !!(newIds && newIds.has(Number(node.dataset.id)));
-        if (!prev) {
-          if (isNew) animate(node, 0, 0, true);
-          return;
-        }
-        const now = node.getBoundingClientRect();
-        const dx = prev.left - now.left;
-        const dy = prev.top - now.top;
-        if (!isNew && Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
-        animate(node, dx, dy, isNew);
-      });
-    }
+    flipItems(prevRects, newIds);
 
     S.first = false;
     updateEmpties();
+  }
+
+  /* FLIP: one batched geometry read, then transform/opacity-only writes, spread
+     over at most CFG.maxGroups batches so a whole-board move cannot stutter */
+  function flipItems(prevRects, newIds) {
+    if (!prevRects) return;
+    const moves = [];
+    el.board.querySelectorAll('.item').forEach((node) => {
+      const id = Number(node.dataset.id);
+      const prev = prevRects.get(id);
+      const isNew = !!(newIds && newIds.has(id));
+      if (!prev) {
+        if (isNew) moves.push({ node: node, dx: 0, dy: 0, fade: true });
+        return;
+      }
+      const now = node.getBoundingClientRect();
+      const dx = prev.left - now.left;
+      const dy = prev.top - now.top;
+      if (!isNew && Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+      moves.push({ node: node, dx: dx, dy: dy, fade: isNew });
+    });
+
+    if (!moves.length) {
+      if (DEV) { S.flipLog.push('moves=0 new=0'); el.board.dataset.flips = S.flipLog.join(' | '); }
+      return;
+    }
+    const groups = Math.max(1, Math.min(CFG.maxGroups, moves.length));
+    let maxDelay = 0;
+    moves.forEach((m, i) => {
+      const batch = Math.floor((i * groups) / moves.length);
+      maxDelay = Math.max(maxDelay, batch * CFG.staggerMs);
+      animate(m.node, m.dx, m.dy, m.fade, batch * CFG.staggerMs);
+    });
+
+    /* dev-only diagnostic: headless runs cannot observe a 300ms transition, so
+       the batch summary is parked on the board (visible in a DOM dump) */
+    if (DEV) {
+      const first = moves[0];
+      const entry = 'moves=' + moves.length + ' new=' + moves.filter((m) => m.fade).length +
+        ' batches=' + groups + ' maxDelay=' + maxDelay + 'ms' +
+        (reduced() ? ' mode=reduced-opacity-only' : ' mode=transform') +
+        ' first=' + Math.round(first.dx) + ',' + Math.round(first.dy);
+      S.flipLog.push(entry);
+      el.board.dataset.flips = S.flipLog.join(' | ');
+    }
   }
 
   function updateCounts() {
@@ -623,12 +698,16 @@
     if (t.body_text) {
       el.dBody.textContent = t.body_text;
       el.dBody.hidden = false;
+      el.dBody.classList.remove('is-empty');
     } else if (t.excerpt) {
       el.dBody.textContent = t.excerpt;
       el.dBody.hidden = false;
+      el.dBody.classList.remove('is-empty');
     } else {
-      el.dBody.textContent = t.detail_fetched ? '正文为空。' : '正文未抓取（详情请求失败）。';
+      /* true of most live topics: the detail fetch never landed */
+      el.dBody.textContent = '正文未抓取。可以点原文链接查看。';
       el.dBody.hidden = false;
+      el.dBody.classList.add('is-empty');
     }
 
     el.dLink.href = t.url;
@@ -642,6 +721,26 @@
     } else {
       el.dQueue.hidden = true;
     }
+    const vote = S.votes.get(t.id);
+    el.dKeep.setAttribute('aria-pressed', vote === 'keep' ? 'true' : 'false');
+    el.dSkip.setAttribute('aria-pressed', vote === 'skip' ? 'true' : 'false');
+    el.dKeep.textContent = vote === 'keep' ? '已标记想看' : (t.state === 'rejected' ? '漏掉了 · 教筛选器' : '想看 · 教筛选器');
+    el.dSkip.textContent = vote === 'skip' ? '已标记不感兴趣' : '不感兴趣';
+    if (vote === 'keep') {
+      el.dTaste.hidden = false;
+      el.dTaste.textContent = '已记为想看。下一轮筛选会拿这条当正例。';
+    } else if (vote === 'skip') {
+      el.dTaste.hidden = false;
+      el.dTaste.textContent = '已记为不感兴趣。下一轮筛选会拿这条当反例。';
+    } else {
+      el.dTaste.hidden = true;
+    }
+    if (el.dNote && document.activeElement !== el.dNote) el.dNote.value = '';
+  }
+
+  /* scrim only exists under 900px, and only while the sheet is open */
+  function syncScrim() {
+    el.scrim.hidden = !(!el.drawer.hidden && !isDesktop());
   }
 
   function openDrawer(id, opts) {
@@ -670,9 +769,11 @@
     window.clearTimeout(hideTimer);
     if (!el.drawer.hidden) {
       el.drawer.classList.add('is-open');
+      syncScrim();
       return;
     }
     el.drawer.hidden = false;
+    syncScrim();
     if (reduced()) {
       el.drawer.classList.add('is-open');
       return;
@@ -691,7 +792,8 @@
     S.openId = null;
     S.pinned = false;
     el.drawer.classList.remove('is-open');
-    const finish = () => { el.drawer.hidden = true; };
+    const finish = () => { el.drawer.hidden = true; syncScrim(); };
+    syncScrim();
     if (reduced()) finish();
     else {
       window.clearTimeout(hideTimer);
@@ -735,6 +837,42 @@
     render(prevRects, null);
     updateCounts();
     if (S.openId === id) fillDrawer(t);
+  }
+
+  function postVote(id, vote) {
+    if (DEV) return;
+    const note = (el.dNote && el.dNote.value || '').trim();
+    try {
+      fetch(CFG.feedback, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: id, vote: vote, note: note })
+      }).catch(() => { /* fire and forget */ });
+    } catch (err) { /* fire and forget */ }
+  }
+
+  function applyVote(id, vote) {
+    const t = S.topics.get(id);
+    if (!t) return;
+    const prevRects = captureRects();
+    S.votes.set(id, vote);
+    if (vote === 'keep') {
+      t.state = 'picked';
+      t.rescued = true;
+      if (!S.queue.has(id)) S.queue.add(id);
+      writeIds(CFG.lsQueue, S.queue);
+      postQueue();
+    } else if (vote === 'skip') {
+      t.state = 'rejected';
+      t.skipped = true;
+      if (S.queue.has(id)) S.queue.delete(id);
+      writeIds(CFG.lsQueue, S.queue);
+      postQueue();
+    }
+    postVote(id, vote);
+    render(prevRects, null);
+    updateCounts();
+    fillDrawer(t);
   }
 
   /* ---------------------------------------------------------------- events */
@@ -810,11 +948,16 @@
   el.drawer.addEventListener('mouseenter', () => window.clearTimeout(closeTimer));
   el.drawer.addEventListener('mouseleave', scheduleClose);
 
+  /* mobile: tapping the dimmed area closes the sheet */
+  el.scrim.addEventListener('click', () => closeDrawer(true));
+
   el.dClose.addEventListener('click', () => closeDrawer(true));
 
   el.dQueue.addEventListener('click', () => {
     if (S.openId) toggleQueue(S.openId);
   });
+  if (el.dKeep) el.dKeep.addEventListener('click', () => { if (S.openId) applyVote(S.openId, 'keep'); });
+  if (el.dSkip) el.dSkip.addEventListener('click', () => { if (S.openId) applyVote(S.openId, 'skip'); });
 
   el.density.addEventListener('click', () => {
     const prevRects = captureRects();
@@ -892,11 +1035,55 @@
   window.addEventListener('resize', () => {
     /* grid placement switches between explicit rows (desktop) and flow (mobile) */
     if (S.data) render(captureRects(), null);
+    syncScrim();
   });
 
-  if (mDesktop.addEventListener) mDesktop.addEventListener('change', () => { if (S.data) render(captureRects(), null); });
+  if (mDesktop.addEventListener) mDesktop.addEventListener('change', () => {
+    if (S.data) render(captureRects(), null);
+    syncScrim();
+  });
+
+  /* mobile: swipe left/right between the three lists; taps stay on the tabs */
+  let swipeX = 0;
+  let swipeY = 0;
+  let swipeT = 0;
+
+  el.board.addEventListener('touchstart', (ev) => {
+    if (isDesktop() || ev.touches.length !== 1) return;
+    swipeX = ev.touches[0].clientX;
+    swipeY = ev.touches[0].clientY;
+    swipeT = Date.now();
+  }, { passive: true });
+
+  el.board.addEventListener('touchend', (ev) => {
+    if (isDesktop() || !swipeT) return;
+    const touch = ev.changedTouches[0];
+    const dx = touch.clientX - swipeX;
+    const dy = touch.clientY - swipeY;
+    const dt = Date.now() - swipeT;
+    swipeT = 0;
+    if (dt > 700 || Math.abs(dx) < 48 || Math.abs(dy) > 40) return;
+    const order = ['all', 'picked', 'queue'];
+    const i = order.indexOf(S.tab);
+    const next = order[i + (dx < 0 ? 1 : -1)];
+    if (next) selectTab(next);
+  }, { passive: true });
 
   /* ------------------------------------------------------------------ init  */
+
+  async function loadVotes() {
+    if (DEV) return;
+    try {
+      const res = await fetch(CFG.feedback, { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const rows = Array.isArray(data.feedback) ? data.feedback : [];
+      rows.forEach((row) => {
+        const n = Number(row.id);
+        if (Number.isFinite(n) && (row.vote === 'keep' || row.vote === 'skip')) S.votes.set(n, row.vote);
+      });
+    } catch (err) { /* offline: votes stay empty until the next successful fetch */ }
+  }
 
   async function loadQueue() {
     S.queue = readIds(CFG.lsQueue);
@@ -950,6 +1137,14 @@
       const d = localStorage.getItem(CFG.lsDensity);
       if (d === 'compact' || d === 'gap') S.density = d;
     } catch (err) { /* noop */ }
+    /* ?tab=picked|queue — deep link into one list (same code path as tap/swipe) */
+    const wanted = params.get('tab');
+    if (wanted === 'all' || wanted === 'picked' || wanted === 'queue') {
+      S.tab = wanted;
+      el.tabs.querySelectorAll('.tab').forEach((b) => {
+        b.setAttribute('aria-selected', b.dataset.tab === S.tab ? 'true' : 'false');
+      });
+    }
     el.density.setAttribute('aria-pressed', S.density === 'compact' ? 'true' : 'false');
     el.density.title = '空位显示方式：' + (S.density === 'compact' ? '紧凑（空位折叠）' : '间隙（空位保留）');
   }
@@ -958,10 +1153,32 @@
     initFromUrl();
     S.seen = readIds(CFG.lsSeen);
     renderSkeleton();
+    S.occupied = new Set();
     await loadQueue();
+    await loadVotes();
     await pull({ next: DEV && params.get('phase') === 'next' });
+    openFromUrl();
+    autoDemo();
     checkHealth();
     tickTimer = window.setInterval(refreshTimes, 30000);
+  }
+
+  /* ?open=<id> — dev helper: open the preview panel without a hover */
+  function openFromUrl() {
+    if (!OPEN_ID) return;
+    const node = el.board.querySelector('.item[data-id="' + OPEN_ID + '"]');
+    if (!node) return;
+    openDrawer(OPEN_ID, { pinned: true, trigger: node });
+  }
+
+  /* ?auto=<n> — dev helper: press 刷新 n times so refresh-driven animation
+     (newly picked FLIP) can be observed or screenshotted headlessly */
+  async function autoDemo() {
+    if (!DEV_AUTO) return;
+    for (let i = 0; i < DEV_AUTO; i++) {
+      await sleep(1200);
+      el.refresh.click();
+    }
   }
 
   document.addEventListener('visibilitychange', () => {

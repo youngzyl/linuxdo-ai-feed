@@ -59,6 +59,13 @@ def build_user_prompt(batch: list[dict], body_chars: int = 1200) -> str:
     return "请筛选以下帖子：\n\n" + "\n\n".join(blocks)
 
 
+def build_user_prompt_with_taste(batch: list[dict], examples_text: str, body_chars: int = 1200) -> str:
+    body = build_user_prompt(batch, body_chars)
+    if examples_text:
+        return examples_text + "\n\n" + body
+    return body
+
+
 def extract_results(text: str) -> list[dict]:
     """Robustly pull the results array out of a model answer."""
     if not text:
@@ -218,7 +225,14 @@ class Filter:
     def judge_batch(self, key: str, batch: list[dict]) -> tuple[list[dict], list[dict]]:
         """Returns (verdicts, unjudged_topics)."""
         cfg = self.cfg["filter"]
-        prompt = build_user_prompt(batch, int(cfg.get("body_chars", 1200)))
+        taste = ""
+        try:
+            import learn as learn_mod
+
+            taste = learn_mod.render_examples(learn_mod.examples_for_prompt(self.store))
+        except Exception:
+            taste = ""
+        prompt = build_user_prompt_with_taste(batch, taste, int(cfg.get("body_chars", 1200)))
         text = self.call_model(key, [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}])
         rows = extract_results(text)
         by_index: dict[int, dict] = {}
