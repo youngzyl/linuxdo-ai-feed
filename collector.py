@@ -199,7 +199,7 @@ class Collector:
                 page_errors.append(f"page {page}: skipped, client cooling down")
                 break
             try:
-                time.sleep(1.5)
+                time.sleep(float(self.cfg["fetch"].get("page_gap_s", 2.5)))
                 collected.extend(self.fetch_page(page)["topics"])
             except Exception as exc:
                 page_errors.append(f"page {page}: {exc}")

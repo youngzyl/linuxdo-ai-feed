@@ -56,10 +56,13 @@ class Pipeline:
                 }
                 # publish the list immediately so the page shows fresh titles while
                 # the (slower) body fetch and the filter run
-                self.store.section_update("fetch", **fetch_summary)
+                self.store.section_replace("fetch", **fetch_summary)
                 self.store.save()
                 if do_detail:
-                    # one RSS request covers the newest 30 bodies
+                    # one RSS request covers the newest 30 bodies. Pace it: firing it right
+                    # after the list pages trips Cloudflare's limiter and sends us to the
+                    # slow proxy path for every body.
+                    time.sleep(float(self.cfg["fetch"].get("rss_delay_s", 3.0)))
                     try:
                         rss = self.collector.fetch_rss_bodies()
                         fetch_summary.update(self.collector.apply_rss_bodies(rss))
@@ -67,13 +70,13 @@ class Pipeline:
                         fetch_summary["rss_error"] = str(exc)
                         self.store.add_failure("fetch_rss", str(exc))
                         self.log(f"rss fetch failed (non-fatal): {exc}")
-                    self.store.section_update("fetch", **fetch_summary)
+                    self.store.section_replace("fetch", **fetch_summary)
                     self.store.save()
                 result["fetch"] = fetch_summary
             except Exception as exc:
                 message = f"{type(exc).__name__}: {exc}"
                 self.store.add_failure("fetch_cycle", message)
-                self.store.section_update("fetch", ok=False, error=message, finished_at=now_iso())
+                self.store.section_replace("fetch", ok=False, error=message, finished_at=now_iso())
                 count = self.store.record_failure(message)
                 backoff_min = min(self.cfg["interval_minutes"] * (2 ** min(count, 4)), 30)
                 self.store.health_update(next_retry_at=(_utcnow() + timedelta(minutes=backoff_min)).strftime("%Y-%m-%dT%H:%M:%SZ"))
@@ -91,7 +94,7 @@ class Pipeline:
             if do_filter:
                 key, key_source = resolve_api_key()
                 summary = self.filter.run()
-                self.store.section_update("filter", **summary)
+                self.store.section_replace("filter", **summary)
                 result["filter"] = summary
                 if not summary["key_present"]:
                     self.store.health_update(status="degraded")
@@ -115,7 +118,7 @@ class Pipeline:
                     if need:
                         details = self.collector.ensure_details(need)
                         fetch_summary.update(details)
-                        self.store.section_update("fetch", **fetch_summary)
+                        self.store.section_replace("fetch", **fetch_summary)
                         self.store.save()
                 except Exception as exc:
                     self.store.add_failure("detail_cycle", f"{type(exc).__name__}: {exc}")
@@ -123,7 +126,7 @@ class Pipeline:
 
             # clear the "new" flag used by the UI animation bookkeeping
             fetch_summary["finished_at"] = fetch_summary.get("finished_at") or now_iso()
-            self.store.section_update("fetch", **fetch_summary)
+            self.store.section_replace("fetch", **fetch_summary)
             self.store.save()
             self.log(
                 "cycle ok: fetched {seen} ({new} new), judged {judged}, picked {picked}".format(

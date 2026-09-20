@@ -26,17 +26,29 @@
   const params = new URLSearchParams(location.search);
   const DEV = params.get('fixture') === '1';
   const DEV_HEALTH = params.get('health');
+  const DEV_SLOW = Number(params.get('slow')) || 0; /* dev: hold the fetch to show skeletons */
+  const DEV_FAIL = params.get('fail') === '1';      /* dev: force the /api/state error state */
 
   const $ = (sel, root) => (root || document).querySelector(sel);
 
   const el = {
     board: $('#board'),
     countline: $('#countline'),
+    cAll: $('#c-all'),
+    cPicked: $('#c-picked'),
+    cTotal: $('#c-total'),
+    cQueue: $('#c-queue'),
     fetched: $('#fetched'),
     model: $('#model'),
     devbadge: $('#devbadge'),
     warnchip: $('#warnchip'),
-    notice: $('#notice'),
+    empties: $('#empties'),
+    emptyC1: $('#empty-c1'),
+    emptyC2: $('#empty-c2'),
+    emptyC3: $('#empty-c3'),
+    errorstate: $('#errorstate'),
+    errordetail: $('#errordetail'),
+    retry: $('#retry'),
     refresh: $('#refresh'),
     density: $('#density'),
     tabs: $('#tabs'),
@@ -133,14 +145,52 @@
     }
   }
 
-  function notice(text) {
-    if (!text) {
-      el.notice.hidden = true;
-      el.notice.textContent = '';
+  const sleep = (ms) => new Promise((r) => window.setTimeout(r, ms));
+
+  function showError(detail) {
+    el.errordetail.textContent = detail;
+    el.errorstate.hidden = false;
+    if (!S.data) { /* nothing rendered yet — the error replaces the board */
+      el.board.hidden = true;
+      el.board.removeAttribute('aria-busy');
+      el.empties.hidden = true;
+    }
+  }
+
+  function clearError() {
+    el.errorstate.hidden = true;
+    el.errordetail.textContent = '';
+  }
+
+  /* per-column empty explanations; on mobile only the visible list gets one */
+  function updateEmpties() {
+    const topics = S.data ? S.data.topics : [];
+    const picked = topics.filter((t) => t.state === 'picked').length;
+    let queued = 0;
+    S.queue.forEach((id) => { if (S.topics.has(id)) queued += 1; });
+    const show = { c1: false, c2: false, c3: false };
+
+    if (!S.data || el.board.hidden) {
+      el.empties.hidden = true;
       return;
     }
-    el.notice.hidden = false;
-    el.notice.textContent = text;
+    if (isDesktop()) {
+      show.c1 = topics.length - picked === 0;
+      show.c2 = picked - queued === 0;
+      show.c3 = queued === 0;
+    } else if (S.tab === 'all') {
+      show.c1 = topics.length === 0;
+    } else if (S.tab === 'picked') {
+      show.c2 = picked === 0;
+    } else {
+      show.c3 = queued === 0;
+    }
+
+    el.emptyC2.textContent = picked > 0 ? '通过筛选的帖子都已在待读。' : '中栏还没有通过筛选的帖子。';
+    el.emptyC1.hidden = !show.c1;
+    el.emptyC2.hidden = !show.c2;
+    el.emptyC3.hidden = !show.c3;
+    el.empties.hidden = !(show.c1 || show.c2 || show.c3);
   }
 
   /* -------------------------------------------------------------- data load */
@@ -153,6 +203,8 @@
   }
 
   async function fetchState(opts) {
+    if (DEV_FAIL) throw new Error('dev：?fail=1 模拟 /api/state 失败');
+    if (DEV_SLOW) await sleep(DEV_SLOW);
     const res = await fetch(stateUrl(opts), { cache: 'no-store' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     return res.json();
@@ -187,8 +239,96 @@
   }
 
   function itemLabel(t) {
-    const score = (t.filter && typeof t.filter.score === 'number') ? ('，评分 ' + t.filter.score) : '';
+    const score = (t.filter && typeof t.filter.score === 'number') ? ('，模型评分 ' + t.filter.score) : '';
     return '打开预览：' + t.title + '。' + metaText(t) + score;
+  }
+
+  /* tags: at most two rendered, the rest folded into +N with the full list in
+     the element's title so the row always stays a single meta line */
+  function tagSummary(t) {
+    const tags = Array.isArray(t.tags) ? t.tags.filter(Boolean) : [];
+    const shown = tags.slice(0, 2).join('/');
+    const extra = Math.max(0, tags.length - 2);
+    return { all: tags, extra: extra, text: extra > 0 ? shown + ' +' + extra : shown };
+  }
+
+  function buildScoreChip(t) {
+    const chip = document.createElement('span');
+    chip.className = 'chip-score';
+    chip.textContent = '评分 ' + t.filter.score;
+    chip.title = '模型评分 · ' + (t.filter.category || '未分类');
+    return chip;
+  }
+
+  function buildLine(cls, text) {
+    const p = document.createElement('p');
+    p.className = cls;
+    p.textContent = text;
+    return p;
+  }
+
+  /* the OP body only earns a row line when it is short; long bodies stay in the
+     drawer so the picked row keeps its scannable hierarchy */
+  const SHORT_EXCERPT_MAX = 140;
+  function shortExcerpt(t) {
+    const text = String(t.body_text || t.excerpt || '').replace(/\s+/g, ' ').trim();
+    if (!text || text.length > SHORT_EXCERPT_MAX) return '';
+    return text;
+  }
+
+  function buildMeta(t, opts) {
+    const meta = document.createElement('p');
+    meta.className = 'item__meta';
+
+    const wantsChip = !opts || opts.chip !== false;
+    if (wantsChip && t.filter && typeof t.filter.score === 'number') {
+      meta.appendChild(buildScoreChip(t));
+    }
+
+    const text = document.createElement('span');
+    text.className = 'item__meta-text';
+    const tg = tagSummary(t);
+
+    const time = document.createElement('span');
+    time.className = 'item__time';
+    time.textContent = relTime(t.created_at);
+    time.title = absTime(t.created_at);
+
+    const bits = [
+      t.author || '匿名',
+      time,
+      '回复 ' + (t.reply_count || 0),
+      '浏览 ' + (t.views || 0)
+    ];
+    appendBits(text, bits);
+    meta.appendChild(text);
+
+    /* classification group is never truncated — the +N fold stays readable */
+    const tags = document.createElement('span');
+    tags.className = 'item__meta-tags';
+    const tagBits = [t.category || '未分类'];
+    if (tg.text) tagBits.push(tg.text);
+    appendBits(tags, tagBits);
+    if (tg.extra > 0) tags.title = '标签 · 共 ' + tg.all.length + ' 个：' + tg.all.join('、');
+    meta.appendChild(tags);
+    return meta;
+  }
+
+  function appendBits(host, bits) {
+    bits.forEach((bit, i) => {
+      if (i) {
+        const dot = document.createElement('span');
+        dot.className = 'dot';
+        dot.textContent = ' · ';
+        host.appendChild(dot);
+      }
+      if (bit === null) return; /* nothing to render (defensive) */
+      if (typeof bit === 'string') {
+        host.appendChild(document.createTextNode(bit));
+        return;
+      }
+      host.appendChild(bit);
+    });
   }
 
   function buildItem(t) {
@@ -204,23 +344,27 @@
     title.textContent = t.title;
     node.appendChild(title);
 
-    const meta = document.createElement('p');
-    meta.className = 'item__meta';
-    meta.textContent = metaText(t);
-    node.appendChild(meta);
+    /* the picked column leads with what the filter found valuable */
+    const picked = t.state === 'picked' && !!t.filter;
+    if (picked) {
+      const value = document.createElement('p');
+      value.className = 'item__value';
+      if (typeof t.filter.score === 'number') value.appendChild(buildScoreChip(t));
+      if (t.filter.category) {
+        const cat = document.createElement('span');
+        cat.className = 'item__cat';
+        cat.textContent = '判定 · ' + t.filter.category;
+        value.appendChild(cat);
+      }
+      node.appendChild(value);
 
-    if (t.state === 'picked' && t.filter && t.filter.summary) {
-      const note = document.createElement('p');
-      note.className = 'item__note';
-      note.textContent = t.filter.summary;
-      node.appendChild(note);
+      if (t.filter.reason) node.appendChild(buildLine('item__reason', t.filter.reason));
+      if (t.filter.summary) node.appendChild(buildLine('item__note', t.filter.summary));
+      const short = shortExcerpt(t);
+      if (short) node.appendChild(buildLine('item__excerpt', short));
     }
 
-    const score = document.createElement('span');
-    score.className = 'item__score';
-    score.setAttribute('aria-hidden', 'true');
-    score.textContent = (t.filter && typeof t.filter.score === 'number') ? String(t.filter.score) : '';
-    node.appendChild(score);
+    node.appendChild(buildMeta(t, { chip: !picked }));
 
     if (t.id === S.openId) node.classList.add('is-current');
     return node;
@@ -245,7 +389,7 @@
       cell.classList.add('cell--empty');
       cell.setAttribute('aria-hidden', 'true');
       const hair = document.createElement('span');
-      hair.className = 'cell__hair';
+      hair.className = 'slot__mark';
       cell.appendChild(hair);
     }
     return cell;
@@ -279,6 +423,48 @@
       node.addEventListener('transitionend', done, { once: true });
       window.setTimeout(done, CFG.animMs + 140);
     });
+  }
+
+  /* loading state: skeleton rows in all three columns, sized like real rows so
+     the list does not jump when data lands (no spinner) */
+  const SKELETON_ROWS = 14;
+  function renderSkeleton() {
+    el.board.hidden = false;
+    el.board.dataset.tab = S.tab;
+    el.board.classList.remove('is-compact');
+    el.board.setAttribute('aria-busy', 'true');
+    el.empties.hidden = true;
+
+    const frag = document.createDocumentFragment();
+    for (let row = 1; row <= SKELETON_ROWS; row++) {
+      for (let col = 1; col <= 3; col++) {
+        const cell = document.createElement('div');
+        cell.className = 'cell cell--c' + col;
+        const pickedRow = col === 2 && row % 6 === 2; /* ≈ the real picked density */
+        if (col === 1 || pickedRow) {
+          const sk = document.createElement('div');
+          sk.className = 'skeleton' + (col === 2 ? ' skeleton--picked' : '');
+          sk.setAttribute('aria-hidden', 'true');
+          const bars = col === 2
+            ? ['sk--title', 'sk--value', 'sk--reason', 'sk--note', 'sk--meta']
+            : ['sk--title', 'sk--meta'];
+          bars.forEach((bar, i) => {
+            const b = document.createElement('span');
+            b.className = 'sk ' + bar + (i === 0 && row % 3 === 0 ? ' sk--title-short' : '');
+            sk.appendChild(b);
+          });
+          cell.appendChild(sk);
+        } else {
+          cell.classList.add('cell--empty');
+          cell.setAttribute('aria-hidden', 'true');
+          const mark = document.createElement('span');
+          mark.className = 'slot__mark';
+          cell.appendChild(mark);
+        }
+        frag.appendChild(cell);
+      }
+    }
+    el.board.replaceChildren(frag);
   }
 
   function render(prevRects, newIds) {
@@ -323,6 +509,7 @@
     }
 
     S.first = false;
+    updateEmpties();
   }
 
   function updateCounts() {
@@ -330,7 +517,12 @@
     const picked = topics.filter((t) => t.state === 'picked').length;
     let queued = 0;
     S.queue.forEach((id) => { if (S.topics.has(id)) queued += 1; });
-    el.countline.textContent = '全部 ' + topics.length + ' · 通过 ' + picked + ' · 待读 ' + queued;
+    el.cAll.textContent = String(topics.length);
+    el.cTotal.textContent = String(topics.length);
+    el.cPicked.textContent = String(picked);
+    el.cQueue.textContent = String(queued);
+    el.countline.setAttribute('aria-label',
+      '全部 ' + topics.length + ' 条，通过 ' + picked + ' 条，待读 ' + queued + ' 条');
   }
 
   function updateHeader() {
@@ -347,8 +539,11 @@
     el.board.querySelectorAll('.item').forEach((node) => {
       const t = S.topics.get(Number(node.dataset.id));
       if (!t) return;
-      const meta = $('.item__meta', node);
-      if (meta) meta.textContent = metaText(t);
+      const time = $('.item__time', node);
+      if (time) {
+        time.textContent = relTime(t.created_at);
+        time.title = absTime(t.created_at);
+      }
     });
     if (S.openId) fillDrawer(S.topics.get(S.openId));
   }
@@ -359,6 +554,9 @@
     S.data = data;
     S.topics.clear();
     data.topics.forEach((t) => S.topics.set(t.id, t));
+
+    el.board.hidden = false;
+    el.board.removeAttribute('aria-busy');
 
     const nowPicked = pickedIds(data);
     const newIds = new Set();
@@ -381,11 +579,11 @@
       const hint = DEV
         ? '无法读取 ' + stateUrl({ next: opts && opts.next }) +
           '（file:// 下浏览器会拦截 fetch，请用本地 http 服务打开；细节见 CONTRACT §6）'
-        : '无法读取 /api/state：' + err.message;
-      notice(hint);
+        : '无法读取 /api/state（' + err.message + '）。后台可能正在重启，稍后重试。';
+      showError(hint);
       return false;
     }
-    notice('');
+    clearError();
     applyState(data, prevRects);
     return true;
   }
@@ -649,6 +847,21 @@
     }
   });
 
+  el.retry.addEventListener('click', async () => {
+    if (el.retry.getAttribute('aria-busy') === '1') return;
+    el.retry.setAttribute('aria-busy', '1');
+    el.retry.textContent = '重试中';
+    clearError();
+    /* with no data yet the board is hidden: show skeletons again while retrying */
+    if (!S.data) renderSkeleton();
+    try {
+      await pull({});
+    } finally {
+      el.retry.removeAttribute('aria-busy');
+      el.retry.textContent = '重试';
+    }
+  });
+
   el.tabs.addEventListener('click', (ev) => {
     const btn = ev.target.closest ? ev.target.closest('.tab') : null;
     if (!btn) return;
@@ -744,6 +957,7 @@
   async function init() {
     initFromUrl();
     S.seen = readIds(CFG.lsSeen);
+    renderSkeleton();
     await loadQueue();
     await pull({ next: DEV && params.get('phase') === 'next' });
     checkHealth();

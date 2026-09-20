@@ -285,6 +285,15 @@ class Store:
             self.data["health"][name].update(fields)
             return self.section(name)
 
+    def section_replace(self, name: str, **fields) -> dict:
+        """Reset a section to its defaults before applying this cycle's fields, so a
+        stale value (e.g. last cycle's proxy error) cannot linger."""
+        with self.lock:
+            merged = default_health()[name]
+            merged.update(fields)
+            self.data["health"][name] = merged
+            return self.section(name)
+
     def record_success(self) -> None:
         self.health_update(
             last_success_at=now_iso(),

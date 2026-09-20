@@ -433,6 +433,13 @@ class TestStore(TempStore):
             self.store.add_failure("filter_call", "bad auth for sk-supersecret-123456")
         self.assertNotIn("sk-supersecret-123456", self.store.recent_failures(1)[0]["error"])
 
+    def test_section_replace_clears_stale_fields(self):
+        self.store.section_update("fetch", rss_error="HTTP 429 from the previous cycle", detail_ok=7)
+        fresh = self.store.section_replace("fetch", ok=True, topics_seen=30)
+        self.assertNotIn("rss_error", fresh)  # defaulted away, not carried over
+        self.assertEqual(fresh["detail_ok"], 0)
+        self.assertEqual(fresh["topics_seen"], 30)
+
     def test_metrics_text_exposes_key_gauges(self):
         self.store.upsert_topics([{"id": 1, "title": "a"}])
         # pending topic + no key => attention 1 (that is the no_key signal)

@@ -36,6 +36,8 @@ DEFAULTS: dict = {
         "backoff_s": [5, 20, 60, 180, 420],
         "jitter": 0.2,
         "detail_delay_s": 2.2,
+        "page_gap_s": 2.5,
+        "rss_delay_s": 3.0,
         "challenge_wait_s": 8,
         "detail_attempts": 2,
         "detail_max_consecutive_failures": 5,
