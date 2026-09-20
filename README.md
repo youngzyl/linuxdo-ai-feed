@@ -75,14 +75,24 @@ Failure handling is layered, and the last layer is an agent:
    After `attention_threshold` (3) consecutive failures `/health` flips
    `attention.needed` to `true`, and so does a missing/invalid key or repeated filter
    errors.
-4. **Agent on call** — `scripts/monitor.sh` is a *deterministic* probe of `/health`
-   (plus a staleness check) designed for a Hermes cron `monitor` field: it prints
-   `service=… attention=… consecutive_failures=… stale=… last_error=<signature>` and
-   its output only changes when something is wrong. A cron job watches it; when the
-   probe changes, the agent wakes up, does the RCA (reads `/api/failures`,
-   `logs/failures.jsonl`, `logs/server.log`, reproduces the failing request), fixes
-   the cause, restarts the service and verifies a full green cycle — instead of you
-   noticing a silently dead collector days later.
+4. **Agent on call** — `scripts/monitor.py` is a *deterministic* probe (stable output while
+   healthy, so a cron worker stays asleep) printing
+   `source=… service=… attention=… consecutive_failures=… stale=… last_error=<signature>`.
+   It reads `/health` when the service is reachable and falls back to `data/state.json`
+   + `logs/` when it is not (e.g. the probe runs on the host while the collector runs in a
+   container). A cron job watches it; when the output changes, the agent wakes up, does the
+   RCA (reads `/api/failures`, `logs/failures.jsonl`, `logs/server.log`, reproduces the
+   failing request with the collector's own headers), fixes the cause, restarts the service
+   and verifies a full green cycle — instead of you noticing a silently dead collector days later.
+
+   Hermes cron `monitor` paths must live in `~/.hermes/scripts/`, so register the wrapper once:
+
+   ```bash
+   cp <workspace>/linuxdo-ai/scripts/host_monitor_wrapper.py ~/.hermes/scripts/linuxdo_ai_monitor.py
+   ```
+
+   then create a cron job with `monitor=linuxdo_ai_monitor.py` and the RCA instructions from
+   this section's step 4 as its prompt.
 
 `python3 run.py status` prints the same health JSON the watchdog reads and exits
 non-zero when `attention.needed` is true.
@@ -94,6 +104,12 @@ linux.do sits behind Cloudflare, which fingerprints the TLS handshake: `urllib` 
 while curl's handshake passes (verified — same headers, three clients, one 200 and two
 403s). `http_util` therefore shells out to curl by default and keeps a stdlib fallback
 for hosts without it. TLS verification is never disabled.
+
+Rate limiting is handled globally rather than per request: the first 403/429/503 puts the
+client into a cooldown (30s → 60s → 180s → 300s, honouring `Retry-After`), a cooldown
+longer than 75s aborts the current phase instead of sleeping through it, and the body
+fetch prefers the tag's RSS feed (one request for 30 opening posts) over 30 paced detail
+calls. Any successful response resets the ladder.
 
 ## Configuration
 

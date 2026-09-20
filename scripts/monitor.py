@@ -11,7 +11,7 @@ Two sources, so it works both next to the service and on the host:
 
 Output lines:
   source=http|file
-  service=up|down
+  service=up|unknown
   attention=0|1
   consecutive_failures=N
   stale=0|1
@@ -96,9 +96,11 @@ def main() -> int:
     state_path = ROOT / "data" / "state.json"
     state_age = (time.time() - state_path.stat().st_mtime) if state_path.exists() else None
     if payload is None:
+        # no HTTP route to the service from here (e.g. this probe runs on the host and
+        # the collector runs in a container): judge from the state file instead
         source = "file"
         payload = from_files()
-        service = "down"
+        service = "unknown"
     else:
         service = "up"
 
@@ -110,13 +112,12 @@ def main() -> int:
         # No cycle has finished yet: only stale once we are past the boot grace period,
         # otherwise every fresh start would page the watchdog.
         uptime = payload.get("uptime_s")
-        if uptime is None:
-            # file mode: a recently written state file means a cycle is in flight
-            stale = 0 if (state_age is not None and state_age < STALE_AFTER) else 1
-        else:
+        if uptime is not None:
             stale = int(float(uptime) > STALE_AFTER)
-        if source == "file":
-            stale = 0 if (state_age is not None and state_age < STALE_AFTER) else stale
+        else:
+            stale = 0 if (state_age is not None and state_age < STALE_AFTER) else 1
+    # a collector that stopped writing is as much a problem as a failing one
+    attention = attention or bool(stale)
 
     print(f"source={source}")
     print(f"service={service}")
