@@ -1,0 +1,42 @@
+{
+  "host": "127.0.0.1",
+  "port": 8791,
+  "tag": "人工智能",
+  "tag_url": "https://linux.do/tag/444-tag/444.json",
+  "site_url": "https://linux.do",
+  "tag_page_url": "https://linux.do/tag/444-tag/444",
+  "pages": 2,
+  "interval_minutes": 15,
+  "attention_threshold": 3,
+  "filter_consecutive_error_threshold": 3,
+  "request_timeout_s": 30,
+  "fetch": {
+    "attempts": 5,
+    "backoff_s": [5, 20, 60, 180, 420],
+    "jitter": 0.2,
+    "detail_delay_s": 2.2,
+    "challenge_wait_s": 8,
+    "detail_max_consecutive_failures": 5,
+    "detail_attempts": 2,
+    "jina_delay_s": 4.0,
+    "jina_prefix": "https://r.jina.ai/",
+    "use_rss": true,
+    "rss_url": "",
+    "save_every": 5,
+    "body_cap": 4000,
+    "detail_max_per_cycle": 15,
+    "max_pages": 6
+  },
+  "filter": {
+    "base_url": "https://api.commandcode.ai/provider/v1",
+    "model": "deepseek/deepseek-v4.1-flash",
+    "prompt_version": "v1",
+    "batch_size": 8,
+    "body_chars": 1200,
+    "attempts": 3,
+    "backoff_s": [4, 12, 30],
+    "timeout_s": 180,
+    "temperature": 0,
+    "zdr": true
+  }
+}

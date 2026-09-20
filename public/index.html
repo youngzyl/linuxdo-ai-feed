@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>linux.do 人工智能 · 每日精选</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#board">跳到列表</a>
+
+<header class="masthead">
+  <div class="wrap masthead__top">
+    <div class="masthead__brand">
+      <p class="label">linux.do · 人工智能</p>
+      <h1 class="brand">每日精选</h1>
+    </div>
+    <div class="masthead__tools">
+      <button class="btn" type="button" id="refresh">刷新</button>
+      <button class="btn" type="button" id="density" aria-pressed="false">紧凑</button>
+    </div>
+  </div>
+  <p class="wrap standfirst">板块新帖按 <em>原顺序</em> 排在左栏，模型判断有价值的移到中栏，你标为待读的落到右栏。空白格保留位置，用来显示筛掉了什么。</p>
+  <div class="wrap meta-line">
+    <p class="countline" id="countline" role="status" aria-live="polite">全部 0 · 通过 0 · 待读 0</p>
+    <p class="footnote" id="fetched">—</p>
+    <p class="footnote">筛选模型 <span id="model">—</span></p>
+    <p class="chip chip--dev" id="devbadge" hidden>DEV · fixture</p>
+    <p class="chip chip--warn" id="warnchip" hidden>需要关注</p>
+  </div>
+</header>
+
+<nav class="wrap tabs" id="tabs" role="tablist" aria-label="列表切换">
+  <button class="tab" type="button" role="tab" id="tab-all" aria-selected="true" aria-controls="board" data-tab="all">全部</button>
+  <button class="tab" type="button" role="tab" id="tab-picked" aria-selected="false" aria-controls="board" data-tab="picked">已筛</button>
+  <button class="tab" type="button" role="tab" id="tab-queue" aria-selected="false" aria-controls="board" data-tab="queue">待读</button>
+</nav>
+
+<div class="wrap boardwrap">
+  <div class="colhead" aria-hidden="true">
+    <span class="label">全部</span>
+    <span class="label">通过</span>
+    <span class="label">待读</span>
+  </div>
+  <main class="board" id="board" tabindex="-1" data-tab="all" aria-label="话题列表"></main>
+  <p class="notice" id="notice" hidden></p>
+</div>
+
+<aside class="drawer" id="drawer" role="dialog" aria-labelledby="d-title" aria-modal="false" hidden>
+  <div class="drawer__head">
+    <p class="label" id="d-state">预览</p>
+    <button class="btn btn--ghost" type="button" id="d-close" aria-label="关闭预览">关闭</button>
+  </div>
+  <h2 class="drawer__title" id="d-title"></h2>
+  <p class="drawer__meta" id="d-meta"></p>
+  <div class="drawer__filter" id="d-filter" hidden>
+    <p class="drawer__score"><span class="label">评分</span> <span id="d-score"></span> <span class="dot">·</span> <span class="label">判定</span> <span id="d-cat"></span></p>
+    <p class="drawer__reason" id="d-reason"></p>
+    <p class="drawer__summary" id="d-summary"></p>
+  </div>
+  <div class="drawer__body" id="d-body"></div>
+  <div class="drawer__actions">
+    <button class="btn" type="button" id="d-queue">移到待读</button>
+    <a class="btn btn--ghost" id="d-link" href="https://linux.do" target="_blank" rel="noopener">原文链接</a>
+  </div>
+</aside>
+
+<script src="app.js" defer></script>
+</body>
+</html>

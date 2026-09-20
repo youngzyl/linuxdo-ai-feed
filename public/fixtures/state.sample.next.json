@@ -1,0 +1,1604 @@
+{
+  "generated_at": "2026-09-20T09:50:11Z",
+  "source": {
+    "tag": "人工智能",
+    "tag_url": "https://linux.do/tag/444-tag/444",
+    "fetched_at": "2026-09-20T09:46:11Z",
+    "total_topics": 312
+  },
+  "filter": {
+    "model": "deepseek/deepseek-v4.1-flash",
+    "prompt_version": "v1",
+    "last_run_at": "2026-09-20T09:49:11Z",
+    "picked": 19,
+    "rejected": 37,
+    "pending": 4,
+    "errors": 0
+  },
+  "topics": [
+    {
+      "id": 2929500,
+      "title": "有没有人用 AI 做过自动整理标签的脚本",
+      "url": "https://linux.do/t/topic/2929500",
+      "author": "newbie2026",
+      "created_at": "2026-09-20T09:41:11.000Z",
+      "bumped_at": "2026-09-20T09:41:11.000Z",
+      "reply_count": 0,
+      "views": 0,
+      "like_count": 0,
+      "category": "General",
+      "tags": [
+        "人工智能",
+        "提问"
+      ],
+      "excerpt": "",
+      "body_text": "",
+      "detail_fetched": false,
+      "state": "pending",
+      "filter": null
+    },
+    {
+      "id": 2929493,
+      "title": "刚发的：有人横向对比过这几个量化档位的实际差距吗",
+      "url": "https://linux.do/t/topic/2929493",
+      "author": "quantask",
+      "created_at": "2026-09-20T09:20:11.000Z",
+      "bumped_at": "2026-09-20T09:27:11.000Z",
+      "reply_count": 0,
+      "views": 0,
+      "like_count": 0,
+      "category": "Develop",
+      "tags": [
+        "人工智能",
+        "量化",
+        "提问"
+      ],
+      "excerpt": "想问问有没有人做过 Q4 和 Q5 在长文档问答上的对照实验。",
+      "body_text": "帖子刚发出来，想问问有没有人做过 Q4 和 Q5 在长文档问答上的对照实验，我这边只有单卡，跑两轮要一整天。",
+      "detail_fetched": true,
+      "state": "pending",
+      "filter": null
+    },
+    {
+      "id": 2929486,
+      "title": "新出的那个 1.5B 端侧模型有人测过吗",
+      "url": "https://linux.do/t/topic/2929486",
+      "author": "smallship",
+      "created_at": "2026-09-20T08:59:11.000Z",
+      "bumped_at": "2026-09-20T09:13:11.000Z",
+      "reply_count": 4,
+      "views": 61,
+      "like_count": 2,
+      "category": "Develop",
+      "tags": [
+        "人工智能",
+        "端侧"
+      ],
+      "excerpt": "看参数挺香的，1.5B 还能 128k 上下文，想知道实际中文能力和内存占用怎么样。",
+      "body_text": "看参数挺香的，1.5B 还能 128k 上下文，想知道实际中文能力和内存占用怎么样，有没有人在手机上跑过的。",
+      "detail_fetched": true,
+      "state": "picked",
+      "filter": {
+        "score": 79,
+        "category": "模型发布",
+        "reason": "端侧新模型有实测价值",
+        "summary": "作者给出手机端实测 token/s 与中文能力对比，结论明确。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929479,
+      "title": "求一个能跑在树莓派 5 上的语音转文字方案",
+      "url": "https://linux.do/t/topic/2929479",
+      "author": "pifan",
+      "created_at": "2026-09-20T08:38:11.000Z",
+      "bumped_at": "2026-09-20T08:59:11.000Z",
+      "reply_count": 11,
+      "views": 208,
+      "like_count": 5,
+      "category": "Develop",
+      "tags": [
+        "人工智能",
+        "端侧",
+        "语音"
+      ],
+      "excerpt": "想做个离线语音笔记，树莓派 5 8G 版本，要求中文识别能用、延迟不要超过两秒。",
+      "body_text": "想做个离线语音笔记，树莓派 5 8G 版本，要求中文识别能用、延迟不要超过两秒。试过 whisper.cpp tiny，中文错得离谱，有没有更好的选择。",
+      "detail_fetched": true,
+      "state": "picked",
+      "filter": {
+        "score": 77,
+        "category": "教程实践",
+        "reason": "方案完整且可复用",
+        "summary": "高赞回复给出量化后的离线方案与配置文件，树莓派 5 上延迟 1.4 秒。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929472,
+      "title": "今天人工智能板块怎么这么多重复帖",
+      "url": "https://linux.do/t/topic/2929472",
+      "author": "olduser",
+      "created_at": "2026-09-20T08:17:11.000Z",
+      "bumped_at": "2026-09-20T08:45:11.000Z",
+      "reply_count": 23,
+      "views": 412,
+      "like_count": 8,
+      "category": "General",
+      "tags": [
+        "人工智能",
+        "反馈"
+      ],
+      "excerpt": "刷了两页，同一个模型发布的帖子有五个，标题还不一样。",
+      "body_text": "刷了两页，同一个模型发布的帖子有五个，标题还不一样。建议合并一下，不然找有效信息太累。",
+      "detail_fetched": true,
+      "state": "pending",
+      "filter": null
+    },
+    {
+      "id": 2929465,
+      "title": "求推荐支持中文的 embedding 模型",
+      "url": "https://linux.do/t/topic/2929465",
+      "author": "ragbeginner",
+      "created_at": "2026-09-20T07:56:11.000Z",
+      "bumped_at": "2026-09-20T08:31:11.000Z",
+      "reply_count": 17,
+      "views": 336,
+      "like_count": 6,
+      "category": "Develop",
+      "tags": [
+        "人工智能",
+        "RAG",
+        "提问"
+      ],
+      "excerpt": "在做知识库检索，现在用的 bge 老版本，长文档切块效果一般。",
+      "body_text": "在做知识库检索，现在用的 bge 老版本，长文档切块效果一般。想知道现在中文检索哪个 embedding 性价比最好，能本地部署优先。",
+      "detail_fetched": true,
+      "state": "picked",
+      "filter": {
+        "score": 75,
+        "category": "工具推荐",
+        "reason": "横向评测数据完整",
+        "summary": "回复整理了五种中文 embedding 在检索任务上的对比结果与部署成本。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929458,
+      "title": "有人用过国产推理卡吗，兼容性到底怎么样",
+      "url": "https://linux.do/t/topic/2929458",
+      "author": "cardgeek",
+      "created_at": "2026-09-20T07:35:11.000Z",
+      "bumped_at": "2026-09-20T08:17:11.000Z",
+      "reply_count": 31,
+      "views": 705,
+      "like_count": 12,
+      "category": "Develop",
+      "tags": [
+        "人工智能",
+        "硬件"
+      ],
+      "excerpt": "看参数比同级 A 卡便宜不少，但听说生态还是麻烦。",
+      "body_text": "看参数比同级 A 卡便宜不少，但听说生态还是麻烦。想了解 transformers、vllm、以及常用量化工具链的实际支持情况，有踩过坑的说说。",
+      "detail_fetched": true,
+      "state": "pending",
+      "filter": null
+    },
+    {
+      "id": 2929451,
+      "title": "关于模型蒸馏，有没有系统的入门材料",
+      "url": "https://linux.do/t/topic/2929451",
+      "author": "studentli",
+      "created_at": "2026-09-20T07:14:11.000Z",
+      "bumped_at": "2026-09-20T08:03:11.000Z",
+      "reply_count": 9,
+      "views": 152,
+      "like_count": 4,
+      "category": "General",
+      "tags": [
+        "人工智能",
+        "提问",
+        "学习"
+      ],
+      "excerpt": "只看过几篇论文，概念上懂，但不知道怎么落地。",
+      "body_text": "只看过几篇论文，概念上懂，但不知道怎么落地。想找有代码、讲清楚温度和软标签的教程，最好是中文的。",
+      "detail_fetched": true,
+      "state": "picked",
+      "filter": {
+        "score": 76,
+        "category": "论文解读",
+        "reason": "系统整理了入门路径",
+        "summary": "高赞回复按论文与代码给出学习顺序，附可运行的蒸馏示例。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929444,
+      "title": "OpenAI 发布 GPT-6：2M 上下文，输入价格再降 40%",
+      "url": "https://linux.do/t/topic/2929444",
+      "author": "kevinzhou",
+      "created_at": "2026-09-20T06:53:11.000Z",
+      "bumped_at": "2026-09-20T06:54:11.000Z",
+      "reply_count": 86,
+      "views": 14203,
+      "like_count": 214,
+      "category": "Develop",
+      "tags": [
+        "人工智能",
+        "资讯"
+      ],
+      "excerpt": "官方博客确认 GPT-6 已通过 API 全量开放，上下文窗口 2M，输出 128k。输入价格从 $1.5/M 降到 $0.9/M，缓存命中再打一折。同时发布迁移指南，gpt-5.x 系列将在 12 月 1 日进入废弃状态。需要关注的是…",
+      "body_text": "官方博客确认 GPT-6 已通过 API 全量开放，上下文窗口 2M，输出 128k。输入价格从 $1.5/M 降到 $0.9/M，缓存命中再打一折。同时发布迁移指南，gpt-5.x 系列将在 12 月 1 日进入废弃状态。需要关注的是新的 reasoning 参数默认开启，旧 prompt 的 token 消耗会明显上升，实测同一段代码审查任务成本涨了约 18%。",
+      "detail_fetched": true,
+      "state": "picked",
+      "filter": {
+        "score": 92,
+        "category": "模型发布",
+        "reason": "新旗舰开放 API，上下文与价格都有实质变化",
+        "summary": "GPT-6 全量开放 API，上下文 2M，输入价格下调 40%，官方给出迁移指南与旧模型弃用时间表。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929437,
+      "title": "每天打卡：今天你用了哪个模型",
+      "url": "https://linux.do/t/topic/2929437",
+      "author": "daka",
+      "created_at": "2026-09-20T06:32:11.000Z",
+      "bumped_at": "2026-09-20T06:40:11.000Z",
+      "reply_count": 58,
+      "views": 903,
+      "like_count": 21,
+      "category": "General",
+      "tags": [
+        "纯水"
+      ],
+      "excerpt": "习惯性打卡，今天用的是本地 32B。",
+      "body_text": "习惯性打卡，今天用的是本地 32B，够用。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 41,
+        "category": "水文闲聊",
+        "reason": "无信息量的日常打卡帖",
+        "summary": "楼主发起每日打卡，回复基本是模型名列表，没有可复用的结论。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929430,
+      "title": "感觉现在的模型都差不多了",
+      "url": "https://linux.do/t/topic/2929430",
+      "author": "hmmm",
+      "created_at": "2026-09-20T06:11:11.000Z",
+      "bumped_at": "2026-09-20T06:26:11.000Z",
+      "reply_count": 74,
+      "views": 1288,
+      "like_count": 33,
+      "category": "General",
+      "tags": [
+        "纯水",
+        "讨论"
+      ],
+      "excerpt": "用了一圈下来感觉都差不多。",
+      "body_text": "用了一圈下来感觉都差不多，可能是我任务太简单。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 45,
+        "category": "水文闲聊",
+        "reason": "主观感受，无数据无对比",
+        "summary": "楼主认为各家模型体验趋同，缺少具体任务与评测支撑。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929423,
+      "title": "Claude Opus 5 代码实测：SWE-bench 首次超过人类基线",
+      "url": "https://linux.do/t/topic/2929423",
+      "author": "cthulhu",
+      "created_at": "2026-09-20T05:50:11.000Z",
+      "bumped_at": "2026-09-20T06:12:11.000Z",
+      "reply_count": 142,
+      "views": 22871,
+      "like_count": 396,
+      "category": "Develop",
+      "tags": [
+        "人工智能",
+        "评测"
+      ],
+      "excerpt": "用官方 docker 镜像跑了三轮，SWE-bench Verified 分别为 67.9 / 68.4 / 68.1%，人类基线是 65.3%。有意思的是失败案例集中在需要跨文件重构的任务上，单一函数修复几乎全过。复现脚本和数据都放在…",
+      "body_text": "用官方 docker 镜像跑了三轮，SWE-bench Verified 分别为 67.9 / 68.4 / 68.1%，人类基线是 65.3%。有意思的是失败案例集中在需要跨文件重构的任务上，单一函数修复几乎全过。复现脚本和数据都放在仓库里，另外附了一份 40 道题的错误分类，Python 3.13 新语法的题表现反而更差。",
+      "detail_fetched": true,
+      "state": "picked",
+      "filter": {
+        "score": 90,
+        "category": "模型发布",
+        "reason": "权威榜单反超人类基线，附完整复现步骤",
+        "summary": "Opus 5 在 SWE-bench Verified 上达到 68.4%，超过人类标注基线，作者给出容器化复现脚本与失败案例分析。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929416,
+      "title": "求推荐便宜的 API 中转站",
+      "url": "https://linux.do/t/topic/2929416",
+      "author": "cheapapi",
+      "created_at": "2026-09-20T05:29:11.000Z",
+      "bumped_at": "2026-09-20T05:58:11.000Z",
+      "reply_count": 39,
+      "views": 1560,
+      "like_count": 17,
+      "category": "General",
+      "tags": [
+        "提问",
+        "API"
+      ],
+      "excerpt": "预算有限，想找便宜点的 API。",
+      "body_text": "预算有限，想找便宜点的 API，有靠谱的推荐吗。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 48,
+        "category": "资源分享",
+        "reason": "求推荐类提问，且涉及第三方中转合规风险",
+        "summary": "楼主求低价 API 中转渠道，回复多为广告与个人推荐，无可靠信息。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929409,
+      "title": "这网站的配色真难看",
+      "url": "https://linux.do/t/topic/2929409",
+      "author": "uicolor",
+      "created_at": "2026-09-20T05:08:11.000Z",
+      "bumped_at": "2026-09-20T05:44:11.000Z",
+      "reply_count": 26,
+      "views": 488,
+      "like_count": 14,
+      "category": "Feedback",
+      "tags": [
+        "吐槽"
+      ],
+      "excerpt": "深色模式下那几个按钮的颜色真的很难看。",
+      "body_text": "深色模式下那几个按钮的颜色真的很难看。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 40,
+        "category": "水文闲聊",
+        "reason": "纯吐槽，无具体问题与改进建议",
+        "summary": "楼主抱怨站点配色，未给出具体页面或方案。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929402,
+      "title": "DeepSeek-V4 权重开源，1.6T MoE 量化后单卡可跑",
+      "url": "https://linux.do/t/topic/2929402",
+      "author": "moelover",
+      "created_at": "2026-09-20T04:47:11.000Z",
+      "bumped_at": "2026-09-20T05:30:11.000Z",
+      "reply_count": 203,
+      "views": 31044,
+      "like_count": 528,
+      "category": "Resource",
+      "tags": [
+        "人工智能",
+        "开源"
+      ],
+      "excerpt": "权重、推理代码、量化脚本一起放出来了。MoE 结构是 256 专家、激活 37B，官方 4bit 量化后权重约 210G，单张 96G 卡开 offload 能跑 8k 上下文，吞吐大概 12 tok/s。有人已经在 8 卡机器上跑到 …",
+      "body_text": "权重、推理代码、量化脚本一起放出来了。MoE 结构是 256 专家、激活 37B，官方 4bit 量化后权重约 210G，单张 96G 卡开 offload 能跑 8k 上下文，吞吐大概 12 tok/s。有人已经在 8 卡机器上跑到 90 tok/s。注意官方的量化脚本默认关掉了 lm_head 的混合精度，长文本会有轻微的重复输出，需要手动改一行。",
+      "detail_fetched": true,
+      "state": "picked",
+      "filter": {
+        "score": 94,
+        "category": "模型发布",
+        "reason": "真开源权重加量化方案，单卡可跑 1.6T MoE",
+        "summary": "V4 权重与推理代码放出，官方给了 4bit 量化脚本，1.6T MoE 在单张 96G 卡上可跑 8k 上下文。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929395,
+      "title": "有人试过用 AI 写小说吗",
+      "url": "https://linux.do/t/topic/2929395",
+      "author": "novelist",
+      "created_at": "2026-09-20T04:26:11.000Z",
+      "bumped_at": "2026-09-20T05:16:11.000Z",
+      "reply_count": 88,
+      "views": 1742,
+      "like_count": 41,
+      "category": "General",
+      "tags": [
+        "讨论",
+        "创作"
+      ],
+      "excerpt": "想试试写长篇，不知道现在的模型能不能撑住连贯性。",
+      "body_text": "想试试写长篇，不知道现在的模型能不能撑住几十万字的连贯性。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 52,
+        "category": "水文闲聊",
+        "reason": "泛泛讨论，缺少具体方法与产出",
+        "summary": "楼主询问 AI 写小说的可行性，回复以个人体验为主。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929388,
+      "title": "睡前一水",
+      "url": "https://linux.do/t/topic/2929388",
+      "author": "waterman",
+      "created_at": "2026-09-20T04:05:11.000Z",
+      "bumped_at": "2026-09-20T04:07:11.000Z",
+      "reply_count": 45,
+      "views": 402,
+      "like_count": 19,
+      "category": "General",
+      "tags": [
+        "纯水"
+      ],
+      "excerpt": "晚安。",
+      "body_text": "晚安。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 40,
+        "category": "水文闲聊",
+        "reason": "纯水帖，无内容",
+        "summary": "无实质内容的日常水帖。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929381,
+      "title": "大模型是不是要泡沫了",
+      "url": "https://linux.do/t/topic/2929381",
+      "author": "bubble",
+      "created_at": "2026-09-20T03:44:11.000Z",
+      "bumped_at": "2026-09-20T03:53:11.000Z",
+      "reply_count": 102,
+      "views": 2680,
+      "like_count": 56,
+      "category": "General",
+      "tags": [
+        "讨论"
+      ],
+      "excerpt": "感觉最近概念太多，真正落地的没几个。",
+      "body_text": "感觉最近概念太多，真正落地的没几个。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 54,
+        "category": "行业观察",
+        "reason": "宏大叙事讨论，无数据支撑",
+        "summary": "楼主讨论行业泡沫，缺少可验证的数据与判断依据。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929374,
+      "title": "Qwen4 开源全家桶：0.6B 到 480B 一次性放出",
+      "url": "https://linux.do/t/topic/2929374",
+      "author": "shuizhu",
+      "created_at": "2026-09-20T03:23:11.000Z",
+      "bumped_at": "2026-09-20T03:39:11.000Z",
+      "reply_count": 168,
+      "views": 26510,
+      "like_count": 441,
+      "category": "Resource",
+      "tags": [
+        "人工智能",
+        "开源"
+      ],
+      "excerpt": "五个尺寸一起放：0.6B、4B、32B、235B-A22B、480B，另外有 1M 上下文的变体和视觉版本。许可改了，商用不需要再申请。4B 那个在端侧是真能用，安卓上 15 tok/s 左右。480B 的推理成本还是太高，除非你有 8…",
+      "body_text": "五个尺寸一起放：0.6B、4B、32B、235B-A22B、480B，另外有 1M 上下文的变体和视觉版本。许可改了，商用不需要再申请。4B 那个在端侧是真能用，安卓上 15 tok/s 左右。480B 的推理成本还是太高，除非你有 8 卡机器，否则 235B-A22B 是性价比最好的选择。",
+      "detail_fetched": true,
+      "state": "picked",
+      "filter": {
+        "score": 88,
+        "category": "模型发布",
+        "reason": "全尺寸开源，含端侧小模型与长上下文版本",
+        "summary": "Qwen4 一次放出 0.6B/4B/32B/235B-A22B/480B 五个尺寸，含 1M 上下文与视觉版本，许可可商用。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929367,
+      "title": "我买了 4090，然后不知道该干嘛",
+      "url": "https://linux.do/t/topic/2929367",
+      "author": "justbuy",
+      "created_at": "2026-09-20T03:02:11.000Z",
+      "bumped_at": "2026-09-20T03:25:11.000Z",
+      "reply_count": 51,
+      "views": 866,
+      "like_count": 22,
+      "category": "General",
+      "tags": [
+        "硬件",
+        "纯水"
+      ],
+      "excerpt": "攒了半年钱买了一张 4090，装好之后发现也就是打游戏。",
+      "body_text": "攒了半年钱买了一张 4090，装好之后发现也就是打游戏。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 46,
+        "category": "水文闲聊",
+        "reason": "个人情况陈述，没有具体问题",
+        "summary": "楼主分享购卡经历，未提出需要解决的问题。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929360,
+      "title": "提问：怎么下载模型",
+      "url": "https://linux.do/t/topic/2929360",
+      "author": "verynew",
+      "created_at": "2026-09-20T02:41:11.000Z",
+      "bumped_at": "2026-09-20T03:11:11.000Z",
+      "reply_count": 33,
+      "views": 590,
+      "like_count": 11,
+      "category": "General",
+      "tags": [
+        "提问"
+      ],
+      "excerpt": "刚接触这块，不知道从哪下载模型文件。",
+      "body_text": "刚接触这块，不知道从哪下载模型文件。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 42,
+        "category": "教程实践",
+        "reason": "基础问题，官方文档可直接查到",
+        "summary": "楼主询问模型下载方式，属于入门基础操作。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929353,
+      "title": "Gemini 4 Ultra 免费额度提到每天 500 次",
+      "url": "https://linux.do/t/topic/2929353",
+      "author": "pengpeng",
+      "created_at": "2026-09-20T02:20:11.000Z",
+      "bumped_at": "2026-09-20T02:57:11.000Z",
+      "reply_count": 97,
+      "views": 18630,
+      "like_count": 189,
+      "category": "General",
+      "tags": [
+        "人工智能",
+        "资讯"
+      ],
+      "excerpt": "官方配额页已经更新：免费层 500 次/天、并发 10，1M 上下文全额可用；付费层价格没动。实测免费层在香港节点会偶发 429，需要重试。对个人项目来说这个额度基本够用了，但如果做批量任务还是要注意 10 并发这个上限。…",
+      "body_text": "官方配额页已经更新：免费层 500 次/天、并发 10，1M 上下文全额可用；付费层价格没动。实测免费层在香港节点会偶发 429，需要重试。对个人项目来说这个额度基本够用了，但如果做批量任务还是要注意 10 并发这个上限。",
+      "detail_fetched": true,
+      "state": "picked",
+      "filter": {
+        "score": 76,
+        "category": "行业观察",
+        "reason": "免费额度大幅提升，对个人开发者成本影响直接",
+        "summary": "Gemini 4 Ultra 免费层提到 500 次/天、并发 10，付费层价格不变，配额由 1M 上下文全额支持。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929346,
+      "title": "AI 会不会取代程序员（第 10086 次）",
+      "url": "https://linux.do/t/topic/2929346",
+      "author": "againandagain",
+      "created_at": "2026-09-20T01:59:11.000Z",
+      "bumped_at": "2026-09-20T02:43:11.000Z",
+      "reply_count": 127,
+      "views": 3204,
+      "like_count": 62,
+      "category": "General",
+      "tags": [
+        "讨论"
+      ],
+      "excerpt": "还是想听听大家的看法。",
+      "body_text": "每隔两周就要来一轮，还是想听听大家的看法。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 44,
+        "category": "水文闲聊",
+        "reason": "重复讨论，板块内已有大量同类帖",
+        "summary": "老话题重复发起，回复无新增信息。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929339,
+      "title": "求个能白嫖 GPT 的办法",
+      "url": "https://linux.do/t/topic/2929339",
+      "author": "freehunter",
+      "created_at": "2026-09-20T01:38:11.000Z",
+      "bumped_at": "2026-09-20T02:29:11.000Z",
+      "reply_count": 47,
+      "views": 1420,
+      "like_count": 15,
+      "category": "General",
+      "tags": [
+        "提问"
+      ],
+      "excerpt": "学生党，实在没钱订阅。",
+      "body_text": "学生党，实在没钱订阅。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 43,
+        "category": "资源分享",
+        "reason": "涉及绕过付费，且无可用信息",
+        "summary": "楼主求免费使用途径，回复多为失效方法。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929332,
+      "title": "刚刚发现一个很水的 AI 站",
+      "url": "https://linux.do/t/topic/2929332",
+      "author": "findwater",
+      "created_at": "2026-09-20T01:17:11.000Z",
+      "bumped_at": "2026-09-20T01:20:11.000Z",
+      "reply_count": 29,
+      "views": 522,
+      "like_count": 13,
+      "category": "General",
+      "tags": [
+        "分享"
+      ],
+      "excerpt": "界面很朴素，没什么特别的。",
+      "body_text": "界面很朴素，就是一堆模型的入口，没什么特别的。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 47,
+        "category": "资源分享",
+        "reason": "分享内容无实质价值",
+        "summary": "楼主分享一个功能简单的聚合站点，无独特之处。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929325,
+      "title": "本地跑 70B 的三种方案对比：双 4090 / M3 Ultra / 二手 A6000",
+      "url": "https://linux.do/t/topic/2929325",
+      "author": "hardwareman",
+      "created_at": "2026-09-20T00:56:11.000Z",
+      "bumped_at": "2026-09-20T01:06:11.000Z",
+      "reply_count": 121,
+      "views": 17402,
+      "like_count": 267,
+      "category": "Develop",
+      "tags": [
+        "人工智能",
+        "本地部署",
+        "硬件"
+      ],
+      "excerpt": "同一份 Q4_K_M 权重，双 4090 拼 48G 显存跑 70B 大概 38 tok/s，整机功耗 780W；M3 Ultra 512G 统一内存约 21 tok/s，功耗 190W，几乎没声音；二手 A6000 48G 单卡 30…",
+      "body_text": "同一份 Q4_K_M 权重，双 4090 拼 48G 显存跑 70B 大概 38 tok/s，整机功耗 780W；M3 Ultra 512G 统一内存约 21 tok/s，功耗 190W，几乎没声音；二手 A6000 48G 单卡 30 tok/s，功耗 300W。算总成本的话A6000 二手价加上电源改造其实不比双 4090 贵多少，但折腾程度最低。表格数据都在附件里。",
+      "detail_fetched": true,
+      "state": "picked",
+      "filter": {
+        "score": 84,
+        "category": "本地部署",
+        "reason": "三种硬件路线的实测数据齐全，含功耗与噪声",
+        "summary": "作者用同一套 GGUF 量化权重在三种硬件上测 tok/s、功耗、噪声与总成本，给出取舍建议。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929318,
+      "title": "我的显卡好烫",
+      "url": "https://linux.do/t/topic/2929318",
+      "author": "hotcard",
+      "created_at": "2026-09-20T00:35:11.000Z",
+      "bumped_at": "2026-09-20T00:52:11.000Z",
+      "reply_count": 41,
+      "views": 634,
+      "like_count": 16,
+      "category": "General",
+      "tags": [
+        "硬件"
+      ],
+      "excerpt": "跑模型的时候风扇声音特别大。",
+      "body_text": "跑模型的时候风扇声音特别大，摸着很烫。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 40,
+        "category": "硬件采购",
+        "reason": "描述模糊，缺少型号与温度数据",
+        "summary": "楼主反映显卡温度高，未提供型号、温度和负载信息。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929311,
+      "title": "有人一起拼车订阅吗",
+      "url": "https://linux.do/t/topic/2929311",
+      "author": "carpool",
+      "created_at": "2026-09-20T00:14:11.000Z",
+      "bumped_at": "2026-09-20T00:38:11.000Z",
+      "reply_count": 56,
+      "views": 1108,
+      "like_count": 20,
+      "category": "General",
+      "tags": [
+        "拼车"
+      ],
+      "excerpt": "三个人凑一下会便宜不少。",
+      "body_text": "三个人凑一下会便宜不少，有意向的私信。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 49,
+        "category": "资源分享",
+        "reason": "拼车类帖子，无技术内容且存在账号风险",
+        "summary": "楼主发起订阅拼车，回复为拉群信息。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929304,
+      "title": "某 AI 浏览器插件被提示注入攻破，可读取全部会话内容",
+      "url": "https://linux.do/t/topic/2929304",
+      "author": "secnotes",
+      "created_at": "2026-09-19T23:53:11.000Z",
+      "bumped_at": "2026-09-20T00:24:11.000Z",
+      "reply_count": 156,
+      "views": 24770,
+      "like_count": 402,
+      "category": "Develop",
+      "tags": [
+        "人工智能",
+        "安全",
+        "漏洞"
+      ],
+      "excerpt": "插件的 summarize 功能会把当前页面内容拼进 system prompt，页面里一段白色小字就能劫持它，让它把用户历史会话摘要 POST 到外部地址。最小复现页面不到 60 行，我本地 Chromium 稳定触发。官方在 1.8…",
+      "body_text": "插件的 summarize 功能会把当前页面内容拼进 system prompt，页面里一段白色小字就能劫持它，让它把用户历史会话摘要 POST 到外部地址。最小复现页面不到 60 行，我本地 Chromium 稳定触发。官方在 1.8.4 里加了输出过滤和域名白名单，但更根本的问题是这类插件普遍没有指令与数据的边界。",
+      "detail_fetched": true,
+      "state": "picked",
+      "filter": {
+        "score": 89,
+        "category": "安全事件",
+        "reason": "真实可利用的提示注入，影响面大且有复现",
+        "summary": "网页内嵌指令可让插件把历史会话摘要发到外部地址，作者给出最小复现页面，官方已确认并发布修复。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929297,
+      "title": "公司不让用 AI 怎么办",
+      "url": "https://linux.do/t/topic/2929297",
+      "author": "workai",
+      "created_at": "2026-09-19T23:32:11.000Z",
+      "bumped_at": "2026-09-20T00:10:11.000Z",
+      "reply_count": 68,
+      "views": 1236,
+      "like_count": 28,
+      "category": "General",
+      "tags": [
+        "讨论"
+      ],
+      "excerpt": "内网没法访问外部 API。",
+      "body_text": "内网没法访问外部 API，只能自己想办法。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 51,
+        "category": "行业观察",
+        "reason": "职场闲聊，无技术信息",
+        "summary": "楼主咨询公司限制下的应对方式，回复以个人经验为主。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929290,
+      "title": "求 GPT 账号共享",
+      "url": "https://linux.do/t/topic/2929290",
+      "author": "shareacc",
+      "created_at": "2026-09-19T23:11:11.000Z",
+      "bumped_at": "2026-09-19T23:56:11.000Z",
+      "reply_count": 38,
+      "views": 890,
+      "like_count": 12,
+      "category": "General",
+      "tags": [
+        "提问"
+      ],
+      "excerpt": "想长期用，一个人买太贵了。",
+      "body_text": "想长期用，一个人买太贵了。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 40,
+        "category": "资源分享",
+        "reason": "账号共享请求，存在安全与合规风险",
+        "summary": "楼主寻求账号共享，无可用信息。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929283,
+      "title": "这个模型名字好长",
+      "url": "https://linux.do/t/topic/2929283",
+      "author": "longname",
+      "created_at": "2026-09-19T22:50:11.000Z",
+      "bumped_at": "2026-09-19T23:42:11.000Z",
+      "reply_count": 22,
+      "views": 344,
+      "like_count": 9,
+      "category": "General",
+      "tags": [
+        "吐槽"
+      ],
+      "excerpt": "一堆名字加版本号加尺寸，根本记不住。",
+      "body_text": "一堆名字加版本号加尺寸，根本记不住。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 40,
+        "category": "水文闲聊",
+        "reason": "吐槽帖，无内容",
+        "summary": "楼主吐槽模型命名，无实质讨论。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929276,
+      "title": "vLLM 0.12 重构 PagedAttention：吞吐与显存实测",
+      "url": "https://linux.do/t/topic/2929276",
+      "author": "gpuqueen",
+      "created_at": "2026-09-19T22:29:11.000Z",
+      "bumped_at": "2026-09-19T22:33:11.000Z",
+      "reply_count": 64,
+      "views": 9830,
+      "like_count": 143,
+      "category": "Develop",
+      "tags": [
+        "人工智能",
+        "推理",
+        "性能"
+      ],
+      "excerpt": "0.12 把 KV 块管理换成两级缓存，块回收不再依赖 GC 停顿。同一台 8 卡 H20 上，8k 并发下吞吐从 3240 tok/s 到 3980 tok/s，p99 从 820ms 降到 610ms。长输入下显存碎片明显减少，压测…",
+      "body_text": "0.12 把 KV 块管理换成两级缓存，块回收不再依赖 GC 停顿。同一台 8 卡 H20 上，8k 并发下吞吐从 3240 tok/s 到 3980 tok/s，p99 从 820ms 降到 610ms。长输入下显存碎片明显减少，压测脚本和参数在评论里，想复现的同学注意要关掉 prefix caching 才是纯对比。",
+      "detail_fetched": true,
+      "state": "picked",
+      "filter": {
+        "score": 82,
+        "category": "性能优化",
+        "reason": "核心数据结构重构，附同机对照实测",
+        "summary": "0.12 把 KV 块管理改成两级缓存，同机上 8k 并发吞吐提升 23%，显存碎片下降，附完整压测参数。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929269,
+      "title": "大家平时用什么输入法",
+      "url": "https://linux.do/t/topic/2929269",
+      "author": "imefan",
+      "created_at": "2026-09-19T22:08:11.000Z",
+      "bumped_at": "2026-09-19T22:19:11.000Z",
+      "reply_count": 61,
+      "views": 978,
+      "like_count": 24,
+      "category": "General",
+      "tags": [
+        "讨论"
+      ],
+      "excerpt": "想找个不带云同步的输入法。",
+      "body_text": "想找个不带云同步的输入法。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 42,
+        "category": "水文闲聊",
+        "reason": "话题与人工智能无关",
+        "summary": "输入法闲聊帖，与板块主题无关。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929262,
+      "title": "有没有人会写正则",
+      "url": "https://linux.do/t/topic/2929262",
+      "author": "regexhelp",
+      "created_at": "2026-09-19T21:47:11.000Z",
+      "bumped_at": "2026-09-19T22:05:11.000Z",
+      "reply_count": 34,
+      "views": 606,
+      "like_count": 11,
+      "category": "Develop",
+      "tags": [
+        "提问"
+      ],
+      "excerpt": "想把一段日志里的时间戳批量替换掉。",
+      "body_text": "想把一段日志里的时间戳批量替换掉，怎么写。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 48,
+        "category": "教程实践",
+        "reason": "通用编程提问，与 AI 主题无关",
+        "summary": "楼主求正则写法，属于通用开发问题。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929255,
+      "title": "把公司客服换成自训小模型，三个月省下 80% 推理成本",
+      "url": "https://linux.do/t/topic/2929255",
+      "author": "liangliang",
+      "created_at": "2026-09-19T21:26:11.000Z",
+      "bumped_at": "2026-09-19T21:51:11.000Z",
+      "reply_count": 188,
+      "views": 21055,
+      "like_count": 331,
+      "category": "General",
+      "tags": [
+        "人工智能",
+        "实践",
+        "成本"
+      ],
+      "excerpt": "客服场景其实很窄，把最近两年工单清洗一遍就有 12 万条高质量 SFT 数据。8B 模型 LoRA 微调，月成本从 4.2 万降到 8 千，回答准确率（人工抽检 500 条）从 71% 到 86%。最难的不是训练，是把兜底流程做对——凡…",
+      "body_text": "客服场景其实很窄，把最近两年工单清洗一遍就有 12 万条高质量 SFT 数据。8B 模型 LoRA 微调，月成本从 4.2 万降到 8 千，回答准确率（人工抽检 500 条）从 71% 到 86%。最难的不是训练，是把兜底流程做对——凡是模型置信度低的必须转人工，不然投诉会变多。",
+      "detail_fetched": true,
+      "state": "picked",
+      "filter": {
+        "score": 85,
+        "category": "行业观察",
+        "reason": "真实落地案例，成本数据与坑都写清楚了",
+        "summary": "用 8B 自训模型替换第三方 API，月成本从 4.2 万降到 8 千，附数据清洗流程与人工兜底策略。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929248,
+      "title": "今天面试被问到 transformer 了",
+      "url": "https://linux.do/t/topic/2929248",
+      "author": "interview",
+      "created_at": "2026-09-19T21:05:11.000Z",
+      "bumped_at": "2026-09-19T21:37:11.000Z",
+      "reply_count": 57,
+      "views": 1044,
+      "like_count": 26,
+      "category": "General",
+      "tags": [
+        "职场",
+        "讨论"
+      ],
+      "excerpt": "被问到注意力机制的复杂度。",
+      "body_text": "被问到注意力机制的复杂度，答得一般。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 50,
+        "category": "行业观察",
+        "reason": "个人经历分享，无技术细节",
+        "summary": "楼主分享面试经历，未涉及具体知识点。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929241,
+      "title": "求推荐笔记本跑模型",
+      "url": "https://linux.do/t/topic/2929241",
+      "author": "laptopq",
+      "created_at": "2026-09-19T20:44:11.000Z",
+      "bumped_at": "2026-09-19T21:23:11.000Z",
+      "reply_count": 44,
+      "views": 812,
+      "like_count": 18,
+      "category": "General",
+      "tags": [
+        "硬件",
+        "提问"
+      ],
+      "excerpt": "预算一万左右，想跑 14B 的模型。",
+      "body_text": "预算一万左右，想跑 14B 的模型。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 53,
+        "category": "硬件采购",
+        "reason": "求推荐类提问，缺少预算与规模约束",
+        "summary": "楼主求推荐笔记本，未给出预算、模型规模等条件。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929234,
+      "title": "听说某模型要收费了是真的吗",
+      "url": "https://linux.do/t/topic/2929234",
+      "author": "hearsay",
+      "created_at": "2026-09-19T20:23:11.000Z",
+      "bumped_at": "2026-09-19T21:09:11.000Z",
+      "reply_count": 52,
+      "views": 934,
+      "like_count": 21,
+      "category": "General",
+      "tags": [
+        "讨论"
+      ],
+      "excerpt": "群里有人说下个月开始收费。",
+      "body_text": "群里有人说下个月开始收费，不知道真假。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 46,
+        "category": "行业观察",
+        "reason": "传闻性质，无官方来源",
+        "summary": "楼主转述收费传闻，未提供官方公告链接。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929227,
+      "title": "MCP 2.0 草案：工具调用加入权限粒度与审计",
+      "url": "https://linux.do/t/topic/2929227",
+      "author": "mcpspec",
+      "created_at": "2026-09-19T20:02:11.000Z",
+      "bumped_at": "2026-09-19T20:55:11.000Z",
+      "reply_count": 73,
+      "views": 11208,
+      "like_count": 176,
+      "category": "Develop",
+      "tags": [
+        "人工智能",
+        "协议",
+        "MCP"
+      ],
+      "excerpt": "草案里最关键的是 scope 声明：工具要显式说明自己需要读文件还是发网络请求，客户端可以按 scope 拒绝。另外加了调用审计和 human-in-the-loop 钩子。现有的 LangGraph、AutoGen、自研框架三家的实现…",
+      "body_text": "草案里最关键的是 scope 声明：工具要显式说明自己需要读文件还是发网络请求，客户端可以按 scope 拒绝。另外加了调用审计和 human-in-the-loop 钩子。现有的 LangGraph、AutoGen、自研框架三家的实现差异很大，迁移成本主要在自己写的 tool wrapper 上。评论区有人在讨论资源型 scope 的写法。",
+      "detail_fetched": true,
+      "state": "picked",
+      "filter": {
+        "score": 83,
+        "category": "工具推荐",
+        "reason": "协议层终于加了权限模型，影响所有 agent 项目",
+        "summary": "草案引入 scope 声明、调用审计与人类确认钩子，作者对比了现有三家实现的差异。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929220,
+      "title": "我做的 AI 绘画被说侵权",
+      "url": "https://linux.do/t/topic/2929220",
+      "author": "artright",
+      "created_at": "2026-09-19T19:41:11.000Z",
+      "bumped_at": "2026-09-19T19:46:11.000Z",
+      "reply_count": 96,
+      "views": 2154,
+      "like_count": 45,
+      "category": "General",
+      "tags": [
+        "讨论",
+        "版权"
+      ],
+      "excerpt": "用了别人的风格参考，被原作者找上门了。",
+      "body_text": "用了别人的风格参考，被原作者找上门了。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 55,
+        "category": "行业观察",
+        "reason": "个案纠纷讨论，缺少可执行的判断依据",
+        "summary": "楼主讲述作品争议，涉及版权问题但无法律依据展开。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929213,
+      "title": "分享一下我的学习路线（其实没什么内容）",
+      "url": "https://linux.do/t/topic/2929213",
+      "author": "roadmap",
+      "created_at": "2026-09-19T19:20:11.000Z",
+      "bumped_at": "2026-09-19T19:32:11.000Z",
+      "reply_count": 63,
+      "views": 1188,
+      "like_count": 27,
+      "category": "General",
+      "tags": [
+        "学习"
+      ],
+      "excerpt": "先看视频，再看论文，然后动手。",
+      "body_text": "先看视频，再看论文，然后动手。就这样。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 45,
+        "category": "教程实践",
+        "reason": "标题自承无内容，实际也未给出材料",
+        "summary": "楼主分享学习路线，正文只有几句建议，无具体资源。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929206,
+      "title": "llama.cpp 新的 KV 量化：长上下文显存下降 42%",
+      "url": "https://linux.do/t/topic/2929206",
+      "author": "gguf",
+      "created_at": "2026-09-19T18:59:11.000Z",
+      "bumped_at": "2026-09-19T19:18:11.000Z",
+      "reply_count": 91,
+      "views": 13660,
+      "like_count": 208,
+      "category": "Develop",
+      "tags": [
+        "人工智能",
+        "推理",
+        "量化"
+      ],
+      "excerpt": "新的 KV 量化把 K 和 V 分开处理，V 用更粗的档位，困惑度几乎不动。128k 上下文的 32B 模型显存从 41G 降到 24G，同一张 3090 现在能开 64k 了。Q4 和 Q5 的差别在长文档问答里能感觉到，短对话基本无…",
+      "body_text": "新的 KV 量化把 K 和 V 分开处理，V 用更粗的档位，困惑度几乎不动。128k 上下文的 32B 模型显存从 41G 降到 24G，同一张 3090 现在能开 64k 了。Q4 和 Q5 的差别在长文档问答里能感觉到，短对话基本无感。作者建议 3060 这类 12G 卡用 Q4 档加 32k 上下文。",
+      "detail_fetched": true,
+      "state": "picked",
+      "filter": {
+        "score": 87,
+        "category": "性能优化",
+        "reason": "显存优化幅度大，长上下文可用性明显提升",
+        "summary": "新 KV 量化方案在 128k 上下文下显存下降 42%，困惑度上升不到 0.4%，附不同量化档位对比。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929199,
+      "title": "求助：显卡花屏",
+      "url": "https://linux.do/t/topic/2929199",
+      "author": "artifact",
+      "created_at": "2026-09-19T18:38:11.000Z",
+      "bumped_at": "2026-09-19T19:04:11.000Z",
+      "reply_count": 36,
+      "views": 572,
+      "like_count": 13,
+      "category": "General",
+      "tags": [
+        "硬件",
+        "提问"
+      ],
+      "excerpt": "开机就花屏，重启偶尔好。",
+      "body_text": "开机就花屏，重启偶尔好。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 41,
+        "category": "硬件采购",
+        "reason": "硬件故障求助，与 AI 使用无直接关联",
+        "summary": "楼主反馈显卡花屏，未提供驱动与日志信息。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929192,
+      "title": "有人用 AI 炒股吗",
+      "url": "https://linux.do/t/topic/2929192",
+      "author": "stockai",
+      "created_at": "2026-09-19T18:17:11.000Z",
+      "bumped_at": "2026-09-19T18:50:11.000Z",
+      "reply_count": 82,
+      "views": 1896,
+      "like_count": 34,
+      "category": "General",
+      "tags": [
+        "讨论"
+      ],
+      "excerpt": "想做一个自动看财报的工具。",
+      "body_text": "想做一个自动看财报的工具，不知道靠不靠谱。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 49,
+        "category": "行业观察",
+        "reason": "投资话题，缺少可验证方法与数据",
+        "summary": "楼主讨论 AI 选股，回复以个人经验为主。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929185,
+      "title": "本地部署是不是智商税",
+      "url": "https://linux.do/t/topic/2929185",
+      "author": "taxq",
+      "created_at": "2026-09-19T17:56:11.000Z",
+      "bumped_at": "2026-09-19T18:36:11.000Z",
+      "reply_count": 118,
+      "views": 2760,
+      "like_count": 54,
+      "category": "General",
+      "tags": [
+        "讨论"
+      ],
+      "excerpt": "电费加显卡钱，不如直接用 API 吧。",
+      "body_text": "电费加显卡钱，不如直接用 API 吧。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 56,
+        "category": "本地部署",
+        "reason": "观点帖，无成本与场景量化",
+        "summary": "楼主质疑本地部署价值，未给出成本对比数据。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929178,
+      "title": "Anthropic 可解释性新论文：定位到具体的拒答回路",
+      "url": "https://linux.do/t/topic/2929178",
+      "author": "paperreader",
+      "created_at": "2026-09-19T17:35:11.000Z",
+      "bumped_at": "2026-09-19T18:22:11.000Z",
+      "reply_count": 58,
+      "views": 8420,
+      "like_count": 132,
+      "category": "Resource",
+      "tags": [
+        "人工智能",
+        "论文",
+        "可解释性"
+      ],
+      "excerpt": "论文用稀疏自编码器在残差流里找到一组与拒答强相关的特征，数量比预期少得多。干预实验很有意思：抑制这几个特征后模型会回答本应拒绝的问题，而其他能力基本不变。作者也承认这套方法在更大模型上还不稳定，但方向比之前的探针方法扎实。…",
+      "body_text": "论文用稀疏自编码器在残差流里找到一组与拒答强相关的特征，数量比预期少得多。干预实验很有意思：抑制这几个特征后模型会回答本应拒绝的问题，而其他能力基本不变。作者也承认这套方法在更大模型上还不稳定，但方向比之前的探针方法扎实。",
+      "detail_fetched": true,
+      "state": "picked",
+      "filter": {
+        "score": 81,
+        "category": "论文解读",
+        "reason": "可解释性研究有实质推进，方法可复用",
+        "summary": "论文用稀疏自编码器定位到拒答相关的少量特征回路，并给出可干预的验证实验。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929171,
+      "title": "模型回答带脏字怎么办",
+      "url": "https://linux.do/t/topic/2929171",
+      "author": "dirtyword",
+      "created_at": "2026-09-19T17:14:11.000Z",
+      "bumped_at": "2026-09-19T18:08:11.000Z",
+      "reply_count": 31,
+      "views": 528,
+      "like_count": 12,
+      "category": "General",
+      "tags": [
+        "提问"
+      ],
+      "excerpt": "偶尔会冒出几句不合适的，怎么过滤。",
+      "body_text": "偶尔会冒出几句不合适的，怎么过滤。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 47,
+        "category": "工具推荐",
+        "reason": "单点问题，缺少上下文与复现",
+        "summary": "楼主反馈模型输出不当内容，未说明模型与场景。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929164,
+      "title": "求个稳定的镜像站",
+      "url": "https://linux.do/t/topic/2929164",
+      "author": "mirrorq",
+      "created_at": "2026-09-19T16:53:11.000Z",
+      "bumped_at": "2026-09-19T16:59:11.000Z",
+      "reply_count": 42,
+      "views": 1064,
+      "like_count": 16,
+      "category": "Resource",
+      "tags": [
+        "资源",
+        "提问"
+      ],
+      "excerpt": "原来的那个挂了，有没有替他的。",
+      "body_text": "原来的那个挂了，有没有替他的。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 44,
+        "category": "资源分享",
+        "reason": "资源求取类提问，无具体需求描述",
+        "summary": "楼主求镜像站点，未说明需要的具体资源。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929157,
+      "title": "某大厂 AI 编程助手被曝把完整仓库上传到第三方服务器",
+      "url": "https://linux.do/t/topic/2929157",
+      "author": "watchdog",
+      "created_at": "2026-09-19T16:32:11.000Z",
+      "bumped_at": "2026-09-19T16:45:11.000Z",
+      "reply_count": 214,
+      "views": 33280,
+      "like_count": 587,
+      "category": "General",
+      "tags": [
+        "人工智能",
+        "安全",
+        "隐私"
+      ],
+      "excerpt": "抓包可以看到插件在索引阶段把整个仓库打包成 zip 上传到收集域名，包括 .env 和私钥文件。官方回应称是匿名的代码结构遥测，但请求体里明显有完整文件内容。作者给出了完整的 DNS + mitmproxy 证据链，以及一份几十行的本地…",
+      "body_text": "抓包可以看到插件在索引阶段把整个仓库打包成 zip 上传到收集域名，包括 .env 和私钥文件。官方回应称是匿名的代码结构遥测，但请求体里明显有完整文件内容。作者给出了完整的 DNS + mitmproxy 证据链，以及一份几十行的本地复现脚本。建议先把插件禁用，检查一下 git 历史里有没有密钥。",
+      "detail_fetched": true,
+      "state": "picked",
+      "filter": {
+        "score": 91,
+        "category": "安全事件",
+        "reason": "涉及代码外泄，有抓包证据，影响所有用户",
+        "summary": "用户抓包发现插件在索引阶段把整个仓库打包上传，官方回应称是遥测，作者给出完整证据链。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929150,
+      "title": "现在的教程都太水了",
+      "url": "https://linux.do/t/topic/2929150",
+      "author": "watertut",
+      "created_at": "2026-09-19T16:11:11.000Z",
+      "bumped_at": "2026-09-19T16:31:11.000Z",
+      "reply_count": 66,
+      "views": 1210,
+      "like_count": 29,
+      "category": "General",
+      "tags": [
+        "吐槽"
+      ],
+      "excerpt": "标题很唬人，点进去就是官方文档截图。",
+      "body_text": "标题很唬人，点进去就是官方文档截图。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 43,
+        "category": "水文闲聊",
+        "reason": "吐槽帖，未指出具体教程与问题",
+        "summary": "楼主抱怨教程质量，无具体案例。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929143,
+      "title": "吐槽一下某平台的客服",
+      "url": "https://linux.do/t/topic/2929143",
+      "author": "supportq",
+      "created_at": "2026-09-19T15:50:11.000Z",
+      "bumped_at": "2026-09-19T16:17:11.000Z",
+      "reply_count": 48,
+      "views": 736,
+      "like_count": 22,
+      "category": "Feedback",
+      "tags": [
+        "吐槽"
+      ],
+      "excerpt": "工单挂了三天没人回。",
+      "body_text": "工单挂了三天没人回。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 40,
+        "category": "水文闲聊",
+        "reason": "客服投诉，与板块主题无关",
+        "summary": "楼主投诉平台客服，无技术内容。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929136,
+      "title": "有人知道这个 bug 吗",
+      "url": "https://linux.do/t/topic/2929136",
+      "author": "bugq",
+      "created_at": "2026-09-19T15:29:11.000Z",
+      "bumped_at": "2026-09-19T16:03:11.000Z",
+      "reply_count": 27,
+      "views": 458,
+      "like_count": 10,
+      "category": "Develop",
+      "tags": [
+        "提问"
+      ],
+      "excerpt": "运行到一半就退出了。",
+      "body_text": "运行到一半就退出了，不知道什么原因。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 50,
+        "category": "教程实践",
+        "reason": "问题描述不清，无报错与环境信息",
+        "summary": "楼主提问 bug，未提供报错日志与环境。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929129,
+      "title": "手把手：8 张 3090 训一个可用的 7B 领域模型",
+      "url": "https://linux.do/t/topic/2929129",
+      "author": "trainhard",
+      "created_at": "2026-09-19T15:08:11.000Z",
+      "bumped_at": "2026-09-19T15:49:11.000Z",
+      "reply_count": 112,
+      "views": 15960,
+      "like_count": 252,
+      "category": "Develop",
+      "tags": [
+        "人工智能",
+        "训练",
+        "教程"
+      ],
+      "excerpt": "全流程都写了：数据清洗（去重、长度过滤、去模板腔）、tokenizer 扩充、LoRA 配置、断点续训。8 张 3090 用 deepspeed zero2，7B 模型 40 万条数据大约两天，成本不到 300 块电费。踩坑记录比正文值…",
+      "body_text": "全流程都写了：数据清洗（去重、长度过滤、去模板腔）、tokenizer 扩充、LoRA 配置、断点续训。8 张 3090 用 deepspeed zero2，7B 模型 40 万条数据大约两天，成本不到 300 块电费。踩坑记录比正文值钱：flash attention 版本不匹配、数据里有超长样本导致 OOM、以及 eval loss 下降但实际效果变差的那种坑。",
+      "detail_fetched": true,
+      "state": "picked",
+      "filter": {
+        "score": 80,
+        "category": "教程实践",
+        "reason": "完整可复现的中文训练教程，含踩坑记录",
+        "summary": "从数据清洗到 LoRA 合并全流程，8 卡 3090 两天的实测配置与常见报错处理。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929122,
+      "title": "用 AI 写周报会不会被发现",
+      "url": "https://linux.do/t/topic/2929122",
+      "author": "weekly",
+      "created_at": "2026-09-19T14:47:11.000Z",
+      "bumped_at": "2026-09-19T15:35:11.000Z",
+      "reply_count": 79,
+      "views": 1520,
+      "like_count": 31,
+      "category": "General",
+      "tags": [
+        "讨论"
+      ],
+      "excerpt": "每周都要写，想省点时间。",
+      "body_text": "每周都要写，想省点时间。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 52,
+        "category": "工具推荐",
+        "reason": "职场取巧讨论，无方法价值",
+        "summary": "楼主询问用 AI 写周报的风险，回复为经验之谈。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929115,
+      "title": "求一个不花钱的 GPU 平台",
+      "url": "https://linux.do/t/topic/2929115",
+      "author": "freegpu",
+      "created_at": "2026-09-19T14:26:11.000Z",
+      "bumped_at": "2026-09-19T14:26:11.000Z",
+      "reply_count": 54,
+      "views": 1342,
+      "like_count": 20,
+      "category": "Resource",
+      "tags": [
+        "资源",
+        "提问"
+      ],
+      "excerpt": "只跑几个实验，不想花钱。",
+      "body_text": "只跑几个实验，不想花钱。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 45,
+        "category": "资源分享",
+        "reason": "资源求取，且回复多为过期信息",
+        "summary": "楼主求免费算力，回复多为限时活动。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929108,
+      "title": "开源 Agent 框架横评：LangGraph / AutoGen / 自研调度",
+      "url": "https://linux.do/t/topic/2929108",
+      "author": "agentdev",
+      "created_at": "2026-09-19T14:05:11.000Z",
+      "bumped_at": "2026-09-19T14:12:11.000Z",
+      "reply_count": 69,
+      "views": 10420,
+      "like_count": 158,
+      "category": "Develop",
+      "tags": [
+        "人工智能",
+        "Agent",
+        "评测"
+      ],
+      "excerpt": "同一套客服工单任务在三套框架上各写一遍。LangGraph 的状态图最清晰但样板代码多；AutoGen 上手最快，但超过三个 agent 之后调试基本靠日志猜；自研调度最可控也最贵。可观测性这块三家都不太行，最后统一接了 OpenTel…",
+      "body_text": "同一套客服工单任务在三套框架上各写一遍。LangGraph 的状态图最清晰但样板代码多；AutoGen 上手最快，但超过三个 agent 之后调试基本靠日志猜；自研调度最可控也最贵。可观测性这块三家都不太行，最后统一接了 OpenTelemetry 才好一点。",
+      "detail_fetched": true,
+      "state": "picked",
+      "filter": {
+        "score": 78,
+        "category": "工具推荐",
+        "reason": "多框架横向对比，含状态管理与调试体验",
+        "summary": "作者用同一套任务在三套框架上实现，比较状态管理、并发、可观测性与维护成本。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929101,
+      "title": "今天又被限额了",
+      "url": "https://linux.do/t/topic/2929101",
+      "author": "ratelimit",
+      "created_at": "2026-09-19T13:44:11.000Z",
+      "bumped_at": "2026-09-19T13:58:11.000Z",
+      "reply_count": 44,
+      "views": 692,
+      "like_count": 17,
+      "category": "General",
+      "tags": [
+        "吐槽"
+      ],
+      "excerpt": "写了半天代码就被限额了。",
+      "body_text": "写了半天代码，一句话没生成就被限额了。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 42,
+        "category": "水文闲聊",
+        "reason": "吐槽帖，无具体配额数据",
+        "summary": "楼主抱怨配额限制，未给出具体接口与用量。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929094,
+      "title": "大模型能算命吗",
+      "url": "https://linux.do/t/topic/2929094",
+      "author": "fortunetell",
+      "created_at": "2026-09-19T13:23:11.000Z",
+      "bumped_at": "2026-09-19T13:44:11.000Z",
+      "reply_count": 38,
+      "views": 604,
+      "like_count": 18,
+      "category": "General",
+      "tags": [
+        "纯水"
+      ],
+      "excerpt": "让模型看八字，说得还挺像回事。",
+      "body_text": "让模型看八字，说得还挺像回事。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 40,
+        "category": "水文闲聊",
+        "reason": "娱乐向无厘头提问",
+        "summary": "楼主询问模型算命，回复为玩梗。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    },
+    {
+      "id": 2929087,
+      "title": "有人搞过语音克隆吗 求代码",
+      "url": "https://linux.do/t/topic/2929087",
+      "author": "voiceclone",
+      "created_at": "2026-09-19T13:02:11.000Z",
+      "bumped_at": "2026-09-19T13:30:11.000Z",
+      "reply_count": 71,
+      "views": 1642,
+      "like_count": 25,
+      "category": "Resource",
+      "tags": [
+        "语音",
+        "提问"
+      ],
+      "excerpt": "想给自己做个语音助手，有没有现成的。",
+      "body_text": "想给自己做个语音助手，有没有现成的。",
+      "detail_fetched": true,
+      "state": "rejected",
+      "filter": {
+        "score": 58,
+        "category": "工具推荐",
+        "reason": "求代码帖，缺少用途与素材条件说明",
+        "summary": "楼主寻求语音克隆代码，未说明用途与素材来源。",
+        "at": "2026-09-20T09:49:11Z"
+      }
+    }
+  ]
+}

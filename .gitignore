@@ -1,0 +1,16 @@
+# secrets
+.env
+
+# runtime state (scraped data + health bookkeeping)
+data/
+logs/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# local scratch
+*.tmp
+.DS_Store
