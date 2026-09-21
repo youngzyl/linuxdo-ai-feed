@@ -6,6 +6,13 @@
    padding; 16px titles with 17px semibold in the picked column; single-line meta
    with at most two tags (+N); labelled score chip; deliberate slot marker. */
 
+/* An author rule with `display:` beats the UA stylesheet's `[hidden] { display: none }`,
+   so any [hidden] element that a later rule gives a display value comes back to life.
+   That is exactly how the mobile scrim kept covering the whole page and swallowing every
+   tap (刷新 / 行 / 详情 全部点不动), even though its markup says `hidden`.
+   This is the reset that makes the attribute authoritative again. */
+[hidden] { display: none !important; }
+
 :root {
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Songti SC", "Source Han Serif SC", "Noto Serif CJK SC", Georgia, "Times New Roman", serif;
   --sans: -apple-system, system-ui, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "WenQuanYi Zen Hei", sans-serif;
