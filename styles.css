@@ -1,0 +1,778 @@
+/* linux.do AI feed — frontend v0 + design iterations
+   Editorial layout: rules instead of cards, one accent, serif display.
+   Light + dark via prefers-color-scheme. No external fonts, no CDN.
+
+   Iteration 1: one spacing scale (4/8/12/16/24/32) drives every margin, gap and
+   padding; 16px titles with 17px semibold in the picked column; single-line meta
+   with at most two tags (+N); labelled score chip; deliberate slot marker. */
+
+/* An author rule with `display:` beats the UA stylesheet's `[hidden] { display: none }`,
+   so any [hidden] element that a later rule gives a display value comes back to life.
+   That is exactly how the mobile scrim kept covering the whole page and swallowing every
+   tap (刷新 / 行 / 详情 全部点不动), even though its markup says `hidden`.
+   This is the reset that makes the attribute authoritative again. */
+[hidden] { display: none !important; }
+
+:root {
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Songti SC", "Source Han Serif SC", "Noto Serif CJK SC", Georgia, "Times New Roman", serif;
+  --sans: -apple-system, system-ui, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "WenQuanYi Zen Hei", sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* spacing scale — the only source of margins, gaps and padding */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --row-pad-y: 14px;   /* brief: row padding 13-15px vertical */
+  --gap-x: var(--s6);  /* column gap 32px (brief allows 28-32) */
+  --pad: var(--s6);
+  --maxw: 1280px;
+  --measure: 16px;
+  --anim: 300ms;
+
+  --bg: #fbfaf7;
+  --fg: #1b1a17;
+  --fg-soft: #3a3733;
+  --dim: #786f66;      /* 4.72:1 on bg */
+  --dim-2: #797166;    /* 4.61:1 on bg (was #9a9287 = 2.94:1) */
+  --rule: #e4dfd5;
+  --hair: #cdc6b9;
+  --tint: #f2eee6;
+  --sk: #eee9e0;
+  --accent: #aa4c25;   /* 5.34:1 on bg, 4.85:1 on accent-tint */
+  --accent-soft: #d9b7a4;
+  --accent-tint: rgba(170, 76, 37, .07);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141312;
+    --fg: #ece7de;      /* 15.07:1 */
+    --fg-soft: #cfc8bd; /* 11.18:1 */
+    --dim: #9a938a;     /* 6.11:1 */
+    --dim-2: #867e74;   /* 4.64:1 (was #6f6961 = 3.42:1) */
+    --rule: #34302c;    /* hairlines: visible but quiet (1.42:1) */
+    --hair: #453f39;
+    --tint: #1d1b19;
+    --sk: #262321;
+    --accent: #e39a72;  /* 8.07:1 */
+    --accent-soft: #7a4c33;
+    --accent-tint: rgba(227, 154, 114, .1);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: var(--measure)/1.6 var(--sans);
+  font-variant-numeric: tabular-nums;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+.wrap {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 0 var(--pad);
+}
+
+.skip {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--bg);
+  color: var(--fg);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--accent);
+  z-index: 60;
+}
+.skip:focus { left: var(--s3); top: var(--s3); }
+
+/* ------------------------------------------------------------ type helpers */
+
+.label {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  letter-spacing: .1em;
+  font-variant: small-caps;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.footnote {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  color: var(--dim);
+}
+
+.dot { color: var(--dim-2); }
+
+/* ---------------------------------------------------------------- masthead */
+
+.masthead { padding: var(--s6) 0 0; }
+
+.masthead__top {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s5);
+}
+
+.brand {
+  margin: var(--s2) 0 0;
+  font: 600 30px/1.15 var(--serif);
+  letter-spacing: -.01em;
+}
+
+.masthead__tools {
+  display: flex;
+  gap: var(--s2);
+  padding-bottom: var(--s1);
+}
+
+.standfirst {
+  max-width: 62ch;
+  margin: var(--s3) 0 0;
+  font: 15px/1.6 var(--serif);
+  color: var(--fg-soft);
+}
+.standfirst em { font-style: italic; }
+
+.meta-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s1) var(--s4);
+  margin-top: var(--s4);
+  padding: var(--s3) 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+
+.counts {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  margin: 0;
+}
+
+.count {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s1);
+}
+
+.count__label {
+  font-size: 11px;
+  letter-spacing: .1em;
+  font-variant: small-caps;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.count__num {
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+
+.count__den {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--dim-2);
+}
+
+.count__sep {
+  width: 1px;
+  height: 12px;
+  align-self: center;
+  background: var(--rule);
+}
+
+.footnote__value { font-family: var(--mono); font-size: 12px; }
+
+.chip {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  letter-spacing: .08em;
+  font-variant: small-caps;
+  text-transform: uppercase;
+  padding: 2px var(--s2);
+  border: 1px solid var(--rule);
+  color: var(--dim);
+}
+.chip--dev { border-style: dashed; }
+.chip--warn {
+  margin-left: auto;
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-tint);
+}
+/* owner-token state: a quiet positive variant of the same chip (read-only stays neutral) */
+.chip--ok {
+  border-color: var(--fg-soft);
+  color: var(--fg);
+}
+#opstatus { margin-left: 0; }
+
+/* ----------------------------------------------------------------- buttons */
+
+.btn {
+  font: 13px/1 var(--sans);
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--rule);
+  padding: var(--s2) var(--s3);
+  min-height: 32px;
+  cursor: pointer;
+  transition: border-color 120ms linear, color 120ms linear, background 120ms linear;
+}
+.btn:hover { border-color: var(--fg-soft); background: var(--tint); }
+.btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.btn[aria-busy="1"], .btn:disabled { color: var(--dim-2); cursor: default; }
+.btn--ghost { border-color: transparent; color: var(--dim); }
+.btn--ghost:hover { color: var(--fg); border-color: var(--rule); }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* -------------------------------------------------------------------- tabs */
+
+.tabs {
+  display: none;
+  margin-top: var(--s3);
+  border-bottom: 1px solid var(--rule);
+}
+
+.tab {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--dim);
+  font: 13px/1 var(--sans);
+  letter-spacing: .02em;
+  padding: 0 var(--s4);
+  min-height: 44px;
+  margin-bottom: -1px;
+  cursor: pointer;
+}
+.tab[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+
+/* ------------------------------------------------------------------- board */
+
+.boardwrap { padding-bottom: var(--s6); }
+
+.colhead { display: none; }
+
+/* `hidden` must win over the grid rules below, or a hidden board keeps painting */
+.board[hidden],
+[hidden] { display: none; }
+
+/* empty-column notices: base hidden, each media query below opts in — keep this
+   before the media queries so `display: grid/block` actually wins */
+.empties { display: none; }
+.empties[hidden],
+.empty[hidden] { display: none; }
+
+.board {
+  display: grid;
+  border-bottom: 1px solid var(--rule);
+}
+
+@media (min-width: 900px) {
+  .colhead {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0 var(--gap-x);
+    padding: var(--s5) 0 var(--s2);
+  }
+  .colhead .label { color: var(--dim-2); }
+
+  .board {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0 var(--gap-x);
+  }
+
+  .empties {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0 var(--gap-x);
+    padding: 0 0 var(--s4);
+  }
+  /* pin each notice to its own column: `hidden` siblings drop out of
+     auto-placement, which would slide the queue notice into column 1 */
+  .empties > .empty:nth-child(1) { grid-column: 1; }
+  .empties > .empty:nth-child(2) { grid-column: 2; }
+  .empties > .empty:nth-child(3) { grid-column: 3; }
+}
+
+@media (max-width: 899px) {
+  :root { --measure: 15px; --pad: var(--s4); --gap-x: var(--s5); }
+  .tabs { display: flex; }
+  .board { grid-template-columns: minmax(0, 1fr); }
+  /* single list, one notice for whichever list is being shown */
+  .empties { display: block; padding: 0 0 var(--s4); }
+  /* single list: only the active tab's column cells take part in flow */
+  .board[data-tab="all"] .cell--c1,
+  .board[data-tab="all"] .cell--c2,
+  .board[data-tab="all"] .cell--c3 { display: block; }
+  .board[data-tab="picked"] .cell--c1,
+  .board[data-tab="queue"] .cell--c1,
+  .board[data-tab="queue"] .cell--c2 { display: none; }
+  /* 已筛 = every picked topic, whether or not it is queued */
+  .board[data-tab="picked"] .cell--c2,
+  .board[data-tab="picked"] .cell--c3,
+  .board[data-tab="queue"] .cell--c3 { display: block; }
+  /* single list: no row alignment, so empty slots carry no meaning */
+  .board[data-tab] .cell--empty { display: none; }
+}
+
+.cell {
+  min-width: 0;
+  border-top: 1px solid var(--rule);
+  contain: layout style;
+}
+
+.cell--empty {
+  pointer-events: none;
+  /* marker slots carry no text: offscreen ones skip layout/paint entirely.
+     Item cells keep real (unsized) containment so row heights stay exact. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 78px;
+}
+
+/* empty slot: deliberate placeholder, same offset in every column so rows keep
+   their height and nothing shifts between columns. The hairline spans half the
+   slot so the hole reads as a hole, not a stray mark. */
+.slot__mark {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  margin-top: var(--s2);
+  opacity: .45;
+}
+.slot__mark::before {
+  content: "";
+  width: 52%;
+  max-width: 240px;
+  height: 1px;
+  background: var(--hair);
+}
+.slot__mark::after {
+  content: "";
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--hair);
+}
+
+/* a slot that just emptied fades in with its row — opacity only, never a
+   movement of its own, so markers never animate independently of the row */
+.cell--appearing { animation: slotIn var(--anim) linear both; }
+
+@keyframes slotIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.board.is-compact .cell--empty {
+  height: 0;
+  border-top-width: 0;
+  overflow: hidden;
+}
+.board.is-compact .slot__mark { display: none; }
+
+/* compact mode: one independent stack per column */
+.col {
+  min-width: 0;
+  display: grid;
+  grid-auto-rows: auto;
+  align-content: start;
+}
+.col > .cell { border-top: 1px solid var(--rule); }
+
+/* ------------------------------------------------------------------- items */
+
+.item {
+  position: relative;
+  padding: var(--row-pad-y) var(--s1) var(--row-pad-y) 0;
+  min-height: 44px;
+  cursor: pointer;
+  contain: layout style;
+}
+
+.item__title {
+  margin: 0;
+  font: 600 16px/1.45 var(--serif);
+  letter-spacing: -.005em;
+  color: var(--fg);
+}
+
+.item__meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+  min-width: 0;
+  margin: var(--s2) 0 0;
+}
+
+.item__meta-text,
+.item__meta-tags {
+  font: 12.5px/1.5 var(--sans);
+  font-variant-numeric: tabular-nums;
+}
+
+.item__meta-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--dim);
+}
+
+.item__meta-tags {
+  flex: none;
+  white-space: nowrap;
+  color: var(--dim-2);
+}
+
+/* score chip — labelled so it can never read as a reply count */
+.chip-score {
+  flex: none;
+  font: 11px/1.5 var(--mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .02em;
+  padding: 0 var(--s1);
+  border: 1px solid var(--rule);
+  color: var(--dim);
+  white-space: nowrap;
+}
+.item--picked .chip-score {
+  border-color: var(--accent-soft);
+  color: var(--accent);
+  background: var(--accent-tint);
+}
+
+/* picked rows lead with the value: score chip + 判定 category, then the model's
+   one-line reason, then the muted summary, then the excerpt only if short */
+.item__value {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: var(--s3) 0 0;
+}
+
+.item__cat {
+  font-size: 11px;
+  line-height: 1.4;
+  letter-spacing: .08em;
+  color: var(--dim);
+}
+
+.item__reason {
+  margin: var(--s2) 0 0;
+  font: 500 14.5px/1.5 var(--sans);
+  color: var(--fg);
+}
+
+.item__note {
+  margin: var(--s1) 0 0;
+  font: 13px/1.55 var(--sans);
+  color: var(--dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.item__excerpt {
+  margin: var(--s1) 0 0;
+  font: 12.5px/1.5 var(--sans);
+  color: var(--dim-2);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.item--picked .item__title { font: 600 17px/1.45 var(--serif); }
+
+/* accent left edge marks the picked column only */
+.item--picked::before {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--s3));
+  top: var(--row-pad-y);
+  bottom: var(--row-pad-y);
+  width: 2px;
+  background: var(--accent);
+}
+
+/* rejected rows stay quiet */
+.item--rejected { opacity: .68; }
+.item--rejected .item__title { font-weight: 400; color: var(--fg-soft); }
+
+/* will-change only while a FLIP is actually running */
+.item.is-flipping { will-change: transform; }
+
+.item:hover .item__title,
+.item:focus-visible .item__title { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.item:hover { opacity: 1; }
+
+.item.is-current { background: var(--accent-tint); }
+
+/* ------------------------------------------------------- empty / loading / error */
+
+/* one-line explanation per empty column (see the media queries for the layout) */
+.empty {
+  margin: 0;
+  font: 13px/1.5 var(--sans);
+  color: var(--dim);
+}
+
+/* loading: skeleton rows in every column — no spinner */
+.skeleton {
+  padding: var(--row-pad-y) var(--s1) var(--row-pad-y) 0;
+  min-height: 78px; /* matches a one-line rejected row */
+}
+.skeleton--picked { min-height: 181px; }
+
+.sk {
+  display: block;
+  height: 10px;
+  background: var(--sk);
+}
+.sk + .sk { margin-top: var(--s2); }
+.sk--title { height: 13px; width: 74%; }
+.sk--title-short { width: 46%; }
+.sk--value { height: 9px; width: 32%; }
+.sk--reason { width: 56%; }
+.sk--note { width: 88%; }
+.sk--meta { height: 9px; width: 44%; }
+
+.errorstate {
+  max-width: 62ch;
+  margin: var(--s5) 0 0;
+  padding: var(--s4) var(--s5);
+  border: 1px solid var(--accent);
+  background: var(--accent-tint);
+}
+.errorstate__title {
+  margin: 0;
+  font: 600 15px/1.4 var(--serif);
+  color: var(--fg);
+}
+.errorstate__detail {
+  margin: var(--s2) 0 0;
+  font: 13px/1.6 var(--sans);
+  color: var(--fg-soft);
+  overflow-wrap: anywhere;
+}
+.errorstate .btn { margin-top: var(--s4); }
+
+/* ------------------------------------------------------------------ drawer */
+
+.drawer {
+  position: fixed;
+  z-index: 40;
+  background: var(--bg);
+  border-left: 1px solid var(--rule);
+  padding: var(--s5) var(--s5) var(--s6);
+  overflow-y: auto;
+  opacity: 0;
+  transform: translateX(14px);
+  transition: transform var(--anim) cubic-bezier(.2, .7, .2, 1), opacity var(--anim) linear;
+}
+.drawer.is-open { opacity: 1; transform: none; }
+
+/* drag-handle visual + tap-outside scrim are mobile affordances only: on
+   desktop the panel must never cover the board */
+.drawer__handle { display: none; }
+.drawer-scrim { display: none; }
+
+.drawer__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+
+.drawer__title {
+  margin: var(--s3) 0 0;
+  font: 600 21px/1.35 var(--serif);
+  letter-spacing: -.01em;
+}
+
+.drawer__meta {
+  margin: var(--s2) 0 0;
+  padding-bottom: var(--s3);
+  border-bottom: 1px solid var(--rule);
+  font: 12.5px/1.6 var(--sans);
+  color: var(--dim);
+}
+
+.drawer__filter {
+  padding: var(--s3) 0;
+  border-bottom: 1px solid var(--rule);
+}
+.drawer__score { margin: 0; font-size: 12.5px; color: var(--dim); }
+.drawer__reason { margin: var(--s2) 0 0; font: 400 15px/1.6 var(--serif); color: var(--fg); }
+.drawer__summary { margin: var(--s1) 0 0; font-size: 13.5px; color: var(--dim); }
+
+.drawer__body {
+  margin: var(--s4) 0 0;
+  max-height: 44vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  font: 14.5px/1.7 var(--serif);
+  color: var(--fg-soft);
+}
+
+/* no OP body was fetched: say so quietly instead of showing a blank panel */
+.drawer__body.is-empty {
+  font: 13px/1.6 var(--sans);
+  color: var(--dim);
+  white-space: normal;
+}
+
+.drawer__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin-top: var(--s5);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--rule);
+}
+
+.drawer__taste {
+  margin: var(--s3) 0 0;
+  font: 12.5px/1.5 var(--sans);
+  color: var(--dim);
+}
+
+.drawer__note {
+  display: block;
+  margin-top: var(--s3);
+  font: 11px/1.4 var(--sans);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dim-2);
+}
+
+.drawer__note input {
+  display: block;
+  width: 100%;
+  margin-top: var(--s2);
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.4 var(--sans);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+@media (min-width: 900px) {
+  .drawer {
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 400px;
+  }
+}
+
+@media (max-width: 899px) {
+  /* bottom sheet: pinned to the viewport bottom, capped at 80vh; the body
+     scrolls, the action row stays reachable at the bottom of the sheet */
+  .drawer {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-height: 80vh;
+    border-left: 0;
+    border-top: 1px solid var(--rule);
+    border-radius: 14px 14px 0 0;
+    padding: var(--s4) var(--s4) calc(var(--s5) + env(safe-area-inset-bottom));
+    transform: translateY(16px);
+    display: flex;
+    flex-direction: column;
+  }
+  .drawer__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+  }
+  .drawer__actions { margin-top: auto; }
+  /* drag-handle visual — the sheet itself stays a plain scroll container */
+  .drawer__handle {
+    display: block;
+    width: 40px;
+    height: 4px;
+    margin: 0 auto var(--s3);
+    border-radius: 2px;
+    background: var(--hair);
+  }
+  /* tap anywhere outside the sheet to close */
+  .drawer-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: rgba(20, 19, 18, .3);
+  }
+  .btn { min-height: 44px; padding: var(--s3) var(--s4); }
+  .item__title { font-size: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+  .drawer { transform: none; }
+}
+
+/* forced colors: nothing may depend on our palette — keep shapes and labels */
+@media (forced-colors: active) {
+  .chip,
+  .chip-score,
+  .btn,
+  .errorstate,
+  .cell,
+  .col > .cell,
+  .count__sep { border-color: CanvasText; }
+
+  .chip-score,
+  .chip { color: CanvasText; background: Canvas; }
+
+  .cell,
+  .col > .cell { border-top-color: CanvasText; }
+
+  .count__sep { background: CanvasText; }
+
+  .slot__mark::before,
+  .slot__mark::after { background: CanvasText; }
+
+  .item--picked::before { background: Highlight; }
+
+  .item.is-current { background: Canvas; }
+  .item.is-current .item__title { text-decoration: underline; text-decoration-thickness: 1px; }
+
+  .sk { background: GrayText; }
+}
