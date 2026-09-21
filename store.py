@@ -97,6 +97,7 @@ class Store:
     def __init__(self, path: Path | str, failure_log: Path | str, memory_failures: int = 300):
         self.path = Path(path)
         self.failure_log = Path(failure_log)
+        self.feedback_log = self.path.parent / "feedback.jsonl"
         self.memory_failures = memory_failures
         self.lock = threading.RLock()
         self.data: dict = {"version": VERSION, "topics": {}, "queue": [], "feedback": [], "health": default_health()}
@@ -125,8 +126,39 @@ class Store:
                     self.data["health"] = health
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self._load_failures()
+            self._merge_feedback_journal()
         if not self.path.exists():
             self.save()
+
+    def _merge_feedback_journal(self) -> None:
+        """Votes are the one thing here that cannot be re-fetched, so they are appended to
+        data/feedback.jsonl as well. Anything in the journal that state.json lost (a stale
+        process can overwrite state.json with an older in-memory snapshot) comes back."""
+        if not self.feedback_log.exists():
+            return
+        best: dict[int, dict] = {}
+        for row in self.data.get("feedback") or []:
+            try:
+                best[int(row["id"])] = row
+            except (KeyError, TypeError, ValueError):
+                continue
+        try:
+            lines = self.feedback_log.read_text(encoding="utf-8", errors="ignore").splitlines()
+        except Exception:
+            return
+        for line in lines:
+            try:
+                row = json.loads(line)
+                tid = int(row["id"])
+            except Exception:
+                continue
+            if row.get("vote") == "clear":
+                best.pop(tid, None)
+                continue
+            current = best.get(tid)
+            if not current or (row.get("at") or "") >= (current.get("at") or ""):
+                best[tid] = row
+        self.data["feedback"] = sorted(best.values(), key=lambda r: r.get("at") or "")
 
     def save(self) -> None:
         with self.lock:
@@ -266,6 +298,37 @@ class Store:
                     clean.append(xi)
             self.data["queue"] = clean
             return list(clean)
+
+    # ------------------------------------------------------------------- feedback
+    def add_feedback(self, entry: dict) -> list[dict]:
+        """Replace this topic's previous vote and append it to the durable journal."""
+        tid = int(entry["id"])
+        with self.lock:
+            rows = [r for r in (self.data.get("feedback") or []) if int(r.get("id") or 0) != tid]
+            rows.append(entry)
+            self.data["feedback"] = rows[-200:]
+            try:
+                self.feedback_log.parent.mkdir(parents=True, exist_ok=True)
+                with self.feedback_log.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            return list(self.data["feedback"])
+
+    def clear_feedback(self, tid: int) -> list[dict]:
+        tid = int(tid)
+        with self.lock:
+            self.data["feedback"] = [r for r in (self.data.get("feedback") or []) if int(r.get("id") or 0) != tid]
+            try:
+                with self.feedback_log.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({"id": tid, "vote": "clear", "at": now_iso()}, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            return list(self.data["feedback"])
+
+    def feedback_rows(self) -> list[dict]:
+        with self.lock:
+            return list(self.data.get("feedback") or [])
 
     # --------------------------------------------------------------------- health
     def health(self) -> dict:

@@ -5,6 +5,7 @@ import json
 import random
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -238,6 +239,108 @@ class TestRssBodies(unittest.TestCase):
         self.assertEqual(col.fetch_rss_bodies(), {})
 
 
+class TestListFetchFallback(unittest.TestCase):
+    """Cloudflare challenges the tag list JSON while RSS / topic details still answer."""
+
+    BLOB = {
+        "topic_list": {
+            "topics": [{"id": 7, "title": "hello &amp; world", "posters": []}],
+            "users": [],
+            "more_topics_url": "/tag/444-tag/444.json?page=1",
+        }
+    }
+
+    def _collector(self, **fetch):
+        cfg = dict(CFG)
+        cfg["fetch"] = {
+            "jina_prefix": "https://r.jina.ai/",
+            "request_timeout_s": 30,
+            "max_pages": 6,
+            "pages": 1,
+            "attempts": 1,
+            "backoff_s": [0],
+            "jitter": 0.0,
+        }
+        cfg["fetch"].update(fetch)
+        return collector.Collector(cfg, mock.Mock(), lambda *_: None)
+
+    def test_jina_url_encodes_the_target(self):
+        col = self._collector()
+        url = col.list_jina_url(0)
+        self.assertTrue(url.startswith("https://r.jina.ai/https%3A%2F%2Flinux.do%2Ftag%2F444-tag%2F444.json"))
+        self.assertIn("%3Forder%3Dcreated%26ascending%3Dfalse%26page%3D0", url)
+
+    def test_direct_success_never_calls_the_proxy(self):
+        col = self._collector()
+        with mock.patch.object(http_util, "get_json", return_value=self.BLOB) as gj, mock.patch.object(
+            http_util, "get"
+        ) as g:
+            page = col.fetch_page(0)
+        self.assertEqual([t["id"] for t in page["topics"]], [7])
+        self.assertEqual(page["topics"][0]["title"], "hello & world")
+        self.assertEqual(col.last_list_source, "direct")
+        g.assert_not_called()
+        self.assertEqual(gj.call_args.args[0], "https://linux.do/tag/444-tag/444.json?order=created&ascending=false&page=0")
+
+    def test_challenge_falls_back_to_jina_then_sticks(self):
+        col = self._collector()
+        challenged = http_util.HttpError(403, "https://linux.do/tag/444-tag/444.json", "error", "Just a moment...")
+        wrapped = ("Title: x\nURL Source: y\nMarkdown Content: " + json.dumps(self.BLOB)).encode()
+        with mock.patch.object(http_util, "get_json", side_effect=challenged) as gj, mock.patch.object(
+            http_util, "get", return_value=(200, wrapped, {})
+        ) as g:
+            page = col.fetch_page(0)
+            self.assertEqual([t["id"] for t in page["topics"]], [7])
+            self.assertEqual(col.last_list_source, "jina")
+            # the encoded target (not the raw query string) is what the proxy receives
+            self.assertTrue(g.call_args.args[0].startswith("https://r.jina.ai/https%3A%2F%2F"))
+            # second call skips the challenged direct path entirely (sticky hold)
+            gj.side_effect = AssertionError("direct path retried inside the hold window")
+            page2 = col.fetch_page(1)
+        self.assertEqual([t["id"] for t in page2["topics"]], [7])
+        self.assertEqual(gj.call_count, 1)
+
+    def test_hold_expires_and_direct_is_retried(self):
+        col = self._collector()
+        challenged = http_util.HttpError(403, "u", "error", "")
+        with mock.patch.object(http_util, "get_json", side_effect=challenged):
+            with mock.patch.object(
+                http_util, "get", return_value=(200, json.dumps(self.BLOB).encode(), {})
+            ):
+                col.fetch_page(0)
+        self.assertGreater(col._list_jina_until, time.time())
+        col._list_jina_until = 0.0  # hold elapsed
+        with mock.patch.object(http_util, "get_json", return_value=self.BLOB) as gj:
+            col.fetch_page(0)
+        self.assertEqual(col.last_list_source, "direct")
+        gj.assert_called_once()
+
+    def test_non_challenge_error_is_not_proxied(self):
+        col = self._collector()
+        with mock.patch.object(
+            http_util, "get_json", side_effect=http_util.HttpError(404, "u", "error", "nope")
+        ), mock.patch.object(http_util, "get") as g:
+            with self.assertRaises(http_util.HttpError):
+                col.fetch_page(0)
+        g.assert_not_called()
+
+    def test_fallback_can_be_disabled(self):
+        col = self._collector(list_jina_fallback=False)
+        with mock.patch.object(
+            http_util, "get_json", side_effect=http_util.HttpError(403, "u", "error", "Just a moment...")
+        ), mock.patch.object(http_util, "get") as g:
+            with self.assertRaises(http_util.HttpError):
+                col.fetch_page(0)
+        g.assert_not_called()
+
+    def test_list_reports_its_source(self):
+        col = self._collector()
+        with mock.patch.object(http_util, "get_json", return_value=self.BLOB):
+            listing = col.fetch_list(pages=1)
+        self.assertEqual(listing["list_source"], "direct")
+        self.assertEqual([t["id"] for t in listing["topics"]], [7])
+
+
 # ----------------------------------------------------------------------- filter
 class TestCooldown(unittest.TestCase):
     def setUp(self):
@@ -405,6 +508,34 @@ class TestLearn(TempStore):
 
         prompt = filter_mod.build_user_prompt_with_taste([{"id": 1, "title": "x"}], "", 50)
         self.assertTrue(prompt.startswith("请筛选以下帖子"))
+
+    def test_votes_survive_a_state_overwrite_via_the_journal(self):
+        import learn as learn_mod
+        from store import Store
+
+        self.store.upsert_topics([{"id": 20, "title": "durable vote"}])
+        learn_mod.record(self.store, 20, "keep", "别丢")
+        journal = self.store.feedback_log
+        self.assertTrue(journal.exists(), "votes must be journalled next to state.json")
+        # simulate a stale writer clobbering state.json with a snapshot made before the vote
+        blob = json.loads((self.dir / "state.json").read_text(encoding="utf-8"))
+        blob["feedback"] = []
+        (self.dir / "state.json").write_text(json.dumps(blob, ensure_ascii=False), encoding="utf-8")
+        reloaded = Store(self.dir / "state.json", self.dir / "failures.jsonl")
+        rows = learn_mod.all_votes(reloaded)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["id"], 20)
+        self.assertEqual(rows[0]["vote"], "keep")
+
+    def test_clear_vote_wins_in_the_journal_merge(self):
+        import learn as learn_mod
+        from store import Store
+
+        self.store.upsert_topics([{"id": 21, "title": "changed my mind"}])
+        learn_mod.record(self.store, 21, "keep")
+        learn_mod.remove(self.store, 21)
+        reloaded = Store(self.dir / "state.json", self.dir / "failures.jsonl")
+        self.assertEqual(learn_mod.all_votes(reloaded), [])
 
 
 # ------------------------------------------------------------------------ store

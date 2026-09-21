@@ -52,9 +52,6 @@ def record(store, topic_id: int, vote: str, note: str = "") -> dict:
         **_topic_snapshot(topic),
     }
     with store.lock:
-        rows = [r for r in (store.data.get("feedback") or []) if int(r.get("id") or 0) != int(topic_id)]
-        rows.append(entry)
-        store.data["feedback"] = rows[-MAX_STORED:]
         # keep/skip also move the topic between columns so the UI reflects the vote
         # immediately, without waiting for the next filter cycle.
         if vote == "keep" and topic.get("state") != "picked":
@@ -64,19 +61,18 @@ def record(store, topic_id: int, vote: str, note: str = "") -> dict:
             topic["state"] = "rejected"
             topic["skipped"] = True
             store.data["queue"] = [x for x in store.data["queue"] if x != int(topic_id)]
+    store.add_feedback(entry)  # durable: state.json + append-only feedback.jsonl
     store.save()
     return entry
 
 
 def remove(store, topic_id: int) -> None:
-    with store.lock:
-        store.data["feedback"] = [r for r in (store.data.get("feedback") or []) if int(r.get("id") or 0) != int(topic_id)]
+    store.clear_feedback(int(topic_id))
     store.save()
 
 
 def all_votes(store) -> list[dict]:
-    with store.lock:
-        return list(store.data.get("feedback") or [])
+    return store.feedback_rows()
 
 
 def counts(store) -> dict:
