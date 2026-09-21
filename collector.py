@@ -11,6 +11,7 @@ from __future__ import annotations
 import html as html_mod
 import re
 import time
+import urllib.parse
 from typing import Any
 
 import http_util
@@ -75,6 +76,10 @@ class Collector:
         self.categories: dict[int, str] = {}
         self._load_categories_cache()
         self.last_detail_source = {"direct": 0, "jina": 0, "failed": 0}
+        # When Cloudflare challenges the list JSON, stop retrying it on every request
+        # for a while and go straight to the read-only proxy (IP reputation + latency).
+        self._list_jina_until = 0.0
+        self.last_list_source = "direct"
 
     # ------------------------------------------------------------------ utilities
     def _load_categories_cache(self):
@@ -126,10 +131,13 @@ class Collector:
         base = self.cfg["tag_url"]
         return f"{base}?order=created&ascending=false&page={page}"
 
-    def fetch_page(self, page: int) -> dict:
-        blob = http_util.get_json(
-            self.list_url(page), headers=linuxdo_headers(), timeout=self.cfg["request_timeout_s"]
-        )
+    def list_jina_url(self, page: int) -> str:
+        """r.jina.ai needs the target fully URL-encoded: as a plain suffix it validates
+        our `order`/`page` query params itself and answers 400 (ParamValidationError)."""
+        target = urllib.parse.quote(self.list_url(page), safe="")
+        return f"{self.cfg['fetch']['jina_prefix']}{target}"
+
+    def _page_from_blob(self, blob: dict) -> dict:
         topic_list = blob.get("topic_list") or {}
         users = {u["id"]: u.get("username") or u.get("name") or "" for u in (topic_list.get("users") or [])}
         topics = []
@@ -137,6 +145,45 @@ class Collector:
             topics.append(self._normalize(raw, users))
         more = topic_list.get("more_topics_url")
         return {"topics": topics, "more": more, "raw_count": len(topic_list.get("topics") or [])}
+
+    def fetch_page_direct(self, page: int) -> dict:
+        blob = http_util.get_json(
+            self.list_url(page), headers=linuxdo_headers(), timeout=self.cfg["request_timeout_s"]
+        )
+        return self._page_from_blob(blob)
+
+    def fetch_page_jina(self, page: int) -> dict:
+        status, raw, _ = http_util.get(
+            self.list_jina_url(page), headers=http_util.JINA_HEADERS, timeout=90
+        )
+        return self._page_from_blob(extract_json_blob(raw.decode("utf-8", "replace")))
+
+    def fetch_page(self, page: int) -> dict:
+        """Direct JSON first; while Cloudflare keeps challenging that path, r.jina.ai.
+
+        Cloudflare challenges the tag list JSON (`cf-mitigated: challenge`, 403) while
+        the tag RSS and /t/topic/<id>.json keep answering, so one proxy request per page
+        keeps the cycle green instead of failing every cycle for hours.
+        """
+        fetch_cfg = self.cfg["fetch"]
+        if time.time() >= self._list_jina_until:
+            try:
+                page_data = self.fetch_page_direct(page)
+            except http_util.HttpError as exc:
+                if not getattr(exc, "is_challenge", False) or not fetch_cfg.get("list_jina_fallback", True):
+                    raise
+                hold = float(fetch_cfg.get("list_jina_backoff_s", 1800))
+                self._list_jina_until = time.time() + hold
+                self.log(
+                    f"list page {page} challenged directly (HTTP {exc.status}); "
+                    f"using r.jina.ai for the next {hold / 60:.0f} min"
+                )
+            else:
+                self._list_jina_until = 0.0
+                self.last_list_source = "direct"
+                return page_data
+        self.last_list_source = "jina"
+        return self.fetch_page_jina(page)
 
     def _normalize(self, raw: dict, users: dict) -> dict:
         posters = raw.get("posters") or []
@@ -210,7 +257,12 @@ class Collector:
         seen: dict[int, dict] = {}
         for topic in collected:
             seen[topic["id"]] = topic
-        return {"topics": list(seen.values()), "pages": min(pages, 1 + len(collected) // 30), "page_errors": page_errors}
+        return {
+            "topics": list(seen.values()),
+            "pages": min(pages, 1 + len(collected) // 30),
+            "page_errors": page_errors,
+            "list_source": self.last_list_source,
+        }
 
     # ----------------------------------------------------------------------- rss
     # The tag's RSS feed carries 30 items *with the opening post body* in a single

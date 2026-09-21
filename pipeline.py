@@ -52,6 +52,7 @@ class Pipeline:
                     "new": len(upsert["new_ids"]),
                     "error": None,
                     "page_errors": listing["page_errors"],
+                    "list_source": listing.get("list_source"),
                     "finished_at": now_iso(),
                 }
                 # publish the list immediately so the page shows fresh titles while
