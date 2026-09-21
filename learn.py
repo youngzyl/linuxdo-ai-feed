@@ -9,7 +9,13 @@ Three signals, all explicit (never inferred from a click or a hover):
 
 The next filter cycle injects the most recent keep/skip examples into the user
 prompt so the model can imitate *your* taste rather than the generic one. The
-examples are stored in data/state.json under `feedback` and never leave the box.
+examples are stored in data/state.json under `feedback`.
+
+Note where they go: the rendered examples (title, note, model verdict) are part of the
+filter's user prompt, so they are sent to the **configured filter provider** whenever the
+filter runs - the same provider your posts already go to. They are not shared with the
+public research/Imagine providers, and the raw note text stays out of /api/state; only the
+authenticated GET /api/feedback (owner token) returns it from this box.
 """
 from __future__ import annotations
 
@@ -52,17 +58,23 @@ def record(store, topic_id: int, vote: str, note: str = "") -> dict:
         **_topic_snapshot(topic),
     }
     with store.lock:
-        # keep/skip also move the topic between columns so the UI reflects the vote
-        # immediately, without waiting for the next filter cycle.
-        if vote == "keep" and topic.get("state") != "picked":
-            topic["state"] = "picked"
-            topic["rescued"] = True
-        if vote == "skip" and topic.get("state") == "picked":
-            topic["state"] = "rejected"
-            topic["skipped"] = True
+        # keep/skip also move the topic between columns and update the reading queue, so the
+        # UI reflects the vote immediately without waiting for the next filter cycle. The
+        # queue change happens inside this same lock and is saved before the caller can
+        # answer, so the response and the durable state cannot disagree.
+        if vote == "keep":
+            if topic.get("state") != "picked":
+                topic["state"] = "picked"
+                topic["rescued"] = True
+            if int(topic_id) not in store.data["queue"]:
+                store.data["queue"].append(int(topic_id))
+        if vote == "skip":
+            if topic.get("state") == "picked":
+                topic["state"] = "rejected"
+                topic["skipped"] = True
             store.data["queue"] = [x for x in store.data["queue"] if x != int(topic_id)]
-    store.add_feedback(entry)  # durable: state.json + append-only feedback.jsonl
-    store.save()
+        store.add_feedback(entry)  # durable: state.json + append-only feedback.jsonl
+        store.save()
     return entry
 
 

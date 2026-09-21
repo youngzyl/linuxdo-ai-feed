@@ -220,6 +220,12 @@ body {
   color: var(--accent);
   background: var(--accent-tint);
 }
+/* owner-token state: a quiet positive variant of the same chip (read-only stays neutral) */
+.chip--ok {
+  border-color: var(--fg-soft);
+  color: var(--fg);
+}
+#opstatus { margin-left: 0; }
 
 /* ----------------------------------------------------------------- buttons */
 

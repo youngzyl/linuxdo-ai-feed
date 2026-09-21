@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from pathlib import Path
 
-from config import redact
+from config import owner_token, redact
 
 VERSION = 1
 FAILURE_LOG_CAP = 2000  # lines kept on disk
@@ -30,6 +31,25 @@ def parse_iso(value: str | None):
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except Exception:
         return None
+
+
+def public_error(value, limit: int = 70) -> str | None:
+    """Sanitized, truncated error text safe for an unauthenticated response.
+
+    `/health` is public (the watchdog and the page read it), so raw upstream text must not
+    be echoed: quotes/newlines/control characters go away, credentials are redacted and the
+    result is capped. The full text stays in data/state.json and logs/failures.jsonl, which
+    are only reachable through the authenticated surface.
+    """
+    if value is None:
+        return None
+    text = str(value)
+    if not text.strip():
+        return None
+    text = redact(text)
+    text = re.sub(r"[^A-Za-z0-9_. :/\-\[\]]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:limit] or None
 
 
 def live_key_present(max_age_s: float = 5.0) -> bool:
@@ -68,6 +88,10 @@ def default_health() -> dict:
         "next_retry_at": None,
         "cycles_total": 0,
         "cycles_failed": 0,
+        # stage success timestamps (additive): the fetch stage and the filter stage keep
+        # independent streaks, so each needs its own "last time this stage was fine".
+        "fetch_last_success_at": None,
+        "filter_last_success_at": None,
         "fetch": {
             "ok": None,
             "pages": 0,
@@ -358,14 +382,47 @@ class Store:
             self.data["health"][name] = merged
             return self.section(name)
 
-    def record_success(self) -> None:
+    def record_fetch_success(self) -> None:
+        """A successful *fetch* stage. Clears the fetch streak and only that one.
+
+        This runs before the filter stage (pipeline.py), so it must not touch
+        `filter_consecutive_errors`: doing so reset the filter failure streak on every
+        healthy cycle, and the filter could fail forever without `/health.attention`
+        (or the watchdog reading it) ever noticing.
+        """
         self.health_update(
             last_success_at=now_iso(),
+            fetch_last_success_at=now_iso(),
             consecutive_failures=0,
-            filter_consecutive_errors=0,
             last_error=None,
             status="ok",
         )
+
+    def record_success(self) -> None:
+        """Backwards-compatible alias for the fetch-stage success (legacy callers/tests)."""
+        self.record_fetch_success()
+
+    def record_filter_success(self) -> None:
+        """A successful filter run. Clears the filter streak and only that one."""
+        self.health_update(
+            filter_consecutive_errors=0,
+            filter_last_success_at=now_iso(),
+            status="ok",
+        )
+
+    def record_filter_failure(self, error: str | None = None) -> int:
+        """A failed filter run: grow the filter streak, keep the fetch streak intact.
+
+        Returns the new filter streak so a caller can log it.
+        """
+        with self.lock:
+            health = self.data["health"]
+            errors = int(health.get("filter_consecutive_errors") or 0) + 1
+            health["filter_consecutive_errors"] = errors
+            if error:
+                health["filter"]["last_error"] = redact(str(error))[:600]
+            health["status"] = "degraded"
+            return errors
 
     def record_failure(self, error: str) -> int:
         with self.lock:
@@ -438,13 +495,13 @@ class Store:
         if health["consecutive_failures"] >= threshold:
             return {
                 "needed": True,
-                "reason": f"fetch failed {health['consecutive_failures']} cycles in a row: {health.get('last_error')}",
+                "reason": f"fetch failed {health['consecutive_failures']} cycles in a row: {public_error(health.get('last_error')) or '-'}",
                 "kind": "fetch_failing",
             }
         if health["filter_consecutive_errors"] >= filter_threshold:
             return {
                 "needed": True,
-                "reason": f"filter errored {health['filter_consecutive_errors']} cycles in a row: {health.get('filter', {}).get('last_error')}",
+                "reason": f"filter errored {health['filter_consecutive_errors']} cycles in a row: {public_error(health.get('filter', {}).get('last_error')) or '-'}",
                 "kind": "filter_failing",
             }
         if pending > 0 and not (health["filter"].get("key_present") or live_key_present()):
@@ -464,6 +521,14 @@ class Store:
             status = "failing" if att["kind"] == "fetch_failing" else "degraded"
         elif health.get("fetch", {}).get("ok") is False or health.get("filter", {}).get("ok") is False:
             status = "degraded"
+        token, _ = owner_token()
+        fetch = dict(health.get("fetch") or {})
+        filt = dict(health.get("filter") or {})
+        # public payload: raw upstream text is replaced by a sanitized signature, and the
+        # structured summary carries what a monitor actually needs
+        fetch["error"] = public_error(fetch.get("error"))
+        filt["last_error"] = public_error(filt.get("last_error"))
+        filt["error"] = public_error(filt.get("error"))
         return {
             "status": status,
             "attention": att,
@@ -475,9 +540,24 @@ class Store:
             "cycles_total": health.get("cycles_total"),
             "cycles_failed": health.get("cycles_failed"),
             "counts": self.counts(),
-            "fetch": health.get("fetch"),
-            "filter": health.get("filter"),
-            "last_error": health.get("last_error"),
+            "fetch": fetch,
+            "filter": filt,
+            "last_error": public_error(health.get("last_error")),
+            "summary": {
+                "fetch_ok": fetch.get("ok"),
+                "topics_seen": fetch.get("topics_seen"),
+                "filter_ok": filt.get("ok"),
+                "judged": filt.get("judged"),
+                "picked": filt.get("picked"),
+                "batches_failed": filt.get("batches_failed"),
+                "filter_consecutive_errors": health.get("filter_consecutive_errors"),
+                "attention": att.get("kind"),
+            },
+            "auth": {
+                # never the token itself: only whether writes are possible at all
+                "writes": "owner" if token else "disabled",
+                "token_configured": bool(token),
+            },
         }
 
     def metrics_text(self, *, cfg: dict) -> str:

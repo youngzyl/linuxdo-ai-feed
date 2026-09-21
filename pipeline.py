@@ -87,7 +87,9 @@ class Pipeline:
                 return result
 
             result["ok"] = True
-            self.store.record_success()
+            # fetch stage only: the filter has not run yet, so this must not clear the
+            # filter failure streak (see Store.record_fetch_success)
+            self.store.record_fetch_success()
             self.store.health_update(next_retry_at=None)
 
             # Filter as soon as the list (+ whatever bodies arrived) is in, so the page
@@ -100,11 +102,11 @@ class Pipeline:
                 if not summary["key_present"]:
                     self.store.health_update(status="degraded")
                 elif summary["ok"]:
-                    self.store.health_update(status="ok", filter_consecutive_errors=0)
+                    self.store.record_filter_success()
                 else:
-                    with self.store.lock:
-                        errors = int(self.store.data["health"].get("filter_consecutive_errors") or 0) + 1
-                    self.store.health_update(status="degraded", filter_consecutive_errors=errors)
+                    # the filter stage keeps its own streak: consecutive fetch-ok /
+                    # filter-fail cycles must reach the attention threshold
+                    self.store.record_filter_failure(summary.get("error"))
                 self.store.save()
             else:
                 self.store.section_update("filter", ok=None)

@@ -2,9 +2,14 @@
 
 A three-column reading desk for the **人工智能** tag on linux.do, filtered by an LLM.
 
+**Live reader:** https://youngzyl.github.io/linuxdo-ai-feed/
+
+The feed runs independently on tcstw; GitHub Pages serves only static assets. See
+[deployment and access](docs/deployment.md) for owner authentication, the current model,
+release evidence and research status. The research harness is **not live** yet.
+
 Every cycle the collector pulls the tag's topic list (`/tag/444-tag/444.json`) read-only,
-fetches the opening post of each new topic, and asks
-`deepseek/deepseek-v4.1-flash` (via the CommandCode provider API) one question per
+fetches the opening post of each new topic, and asks the configured filter model one question per
 batch: *is this actually worth reading?* The page then shows the result as three
 aligned columns — everything, the picks, and your reading queue — so the filtering
 itself is visible.
@@ -60,6 +65,11 @@ Environment variables:
 
 `GET /api/state` shape is specified in [CONTRACT.md](CONTRACT.md).
 
+POST queue/feedback/refresh and GET feedback/failures require the owner bearer token.
+Without a configured owner token those routes fail closed; anonymous reading still works.
+The browser **管理** button stores the token in sessionStorage only. Cross-origin access
+uses an exact origin allowlist; CORS does not replace authentication.
+
 ## Monitoring and self-healing
 
 Failure handling is layered, and the last layer is an agent:
@@ -73,15 +83,16 @@ Failure handling is layered, and the last layer is an agent:
    simply retried on the next cycle.
 3. **Across cycles** — a failed cycle increments `consecutive_failures` and pushes the
    next attempt out to `interval × 2^min(n,4)` (cap 30 min). Any success resets it.
-   After `attention_threshold` (3) consecutive failures `/health` flips
+   Fetch and filter failure streaks are independent: a successful fetch cannot clear
+   repeated filter failures. After `attention_threshold` (3) consecutive failures `/health` flips
    `attention.needed` to `true`, and so does a missing/invalid key or repeated filter
    errors.
 4. **Agent on call** — `scripts/monitor.py` is a *deterministic* probe (stable output while
    healthy, so a cron worker stays asleep) printing
    `source=… service=… attention=… consecutive_failures=… stale=… last_error=<signature>`.
-   It reads `/health` when the service is reachable and falls back to `data/state.json`
-   + `logs/` when it is not (e.g. the probe runs on the host while the collector runs in a
-   container). A cron job watches it; when the output changes, the agent wakes up, does the
+   The deployed wrapper reads the HTTPS URL in `deploy/active-target.json`; a failed
+   remote probe never falls back to local files. Only unconfigured local/dev mode can
+   fall back to `data/state.json` + `logs/`. A cron job watches it; when the output changes, the agent wakes up, does the
    RCA (reads `/api/failures`, `logs/failures.jsonl`, `logs/server.log`, reproduces the
    failing request with the collector's own headers), fixes the cause, restarts the service
    and verifies a full green cycle — instead of you noticing a silently dead collector days later.
@@ -106,11 +117,14 @@ while curl's handshake passes (verified — same headers, three clients, one 200
 403s). `http_util` therefore shells out to curl by default and keeps a stdlib fallback
 for hosts without it. TLS verification is never disabled.
 
-Rate limiting is handled globally rather than per request: the first 403/429/503 puts the
+Credential-bearing requests use the stdlib transport, keep secrets out of curl argv,
+and refuse all redirects. TLS certificate/hostname verification remains enabled.
+
+Rate limiting is scoped per origin (scheme/host/port), not shared across providers: the first 403/429/503 puts the
 client into a cooldown (30s → 60s → 180s → 300s, honouring `Retry-After`), a cooldown
 longer than 75s aborts the current phase instead of sleeping through it, and the body
 fetch prefers the tag's RSS feed (one request for 30 opening posts) over 30 paced detail
-calls. Any successful response resets the ladder.
+calls. A successful response resets only that origin's ladder.
 
 ## Configuration
 

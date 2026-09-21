@@ -1,9 +1,15 @@
 /* linux.do AI feed — frontend v0 (vanilla, no build step)
  *
  * Data: GET /api/state  (see CONTRACT.md §1)
+ * API origin: public/runtime-config.js (`apiBase`), a trusted build-time value. Empty
+ * means same origin (the backend serves this file itself); the GitHub Pages build injects
+ * the deployed API origin. Never read from the query string.
+ * Owner writes (queue/vote/refresh) need an owner token, kept in sessionStorage only and
+ * sent as `Authorization: Bearer`. Without it the page is read-only: browsing, the drawer
+ * and the original links keep working, the write controls are disabled with a reason.
  * Dev switch: ?fixture=1 loads fixtures/state.sample.json (served copy lives in
  * public/fixtures/). Dev-only extras: &phase=next loads the "next" fixture,
- * &health=attention fakes the /health attention chip.
+ * &health=attention fakes the /health attention chip. Fixture mode never talks to the API.
  */
 'use strict';
 
@@ -19,6 +25,7 @@
     lsQueue: 'linuxdo-ai.queue',
     lsSeen: 'linuxdo-ai.seenPicked',
     lsDensity: 'linuxdo-ai.density',
+    ssOwner: 'linuxdo-ai.ownerToken',
     hoverMs: 250,
     closeMs: 180,
     animMs: 300,     /* FLIP duration (brief: 280-340ms) */
@@ -26,6 +33,28 @@
     maxGroups: 12,   /* ⇒ at most 12 batches, ≤154ms extra, never a JS-driven frame loop */
     fadeMs: 160      /* prefers-reduced-motion: opacity only, no movement */
   };
+
+  /* ---------------------------------------------------------------- api origin */
+  /* `apiBase` is trusted build-time configuration (public/runtime-config.js). It is never
+     read from the URL, localStorage or the DOM, so a crafted link cannot redirect the page
+     or its owner token to another host. Only an absolute https:// base (or a localhost
+     http:// base for dev) without query/fragment is accepted; anything else falls back to
+     same-origin. */
+  function apiBaseFrom(value) {
+    const raw = (typeof value === 'string') ? value.trim() : '';
+    if (!raw) return '';
+    let u;
+    try { u = new URL(raw); } catch (err) { return ''; }
+    const localDev = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(u.hostname);
+    if (u.protocol !== 'https:' && !(u.protocol === 'http:' && localDev)) return '';
+    if (u.search || u.hash) return '';
+    return raw.replace(/\/+$/, '');
+  }
+  const RUNTIME = (typeof window !== 'undefined' && window.LINUXDO_AI_RUNTIME) || {};
+  const API_BASE = apiBaseFrom(RUNTIME.apiBase);
+  const api = (path) => API_BASE + path;
+  /* the browser test reads these two; no token is ever exposed */
+  window.LINUXDO_AI_DEBUG = { apiBase: API_BASE, sameOrigin: API_BASE === '' };
 
   const params = new URLSearchParams(location.search);
   const DEV = params.get('fixture') === '1';
@@ -75,7 +104,10 @@
     dNote: $('#d-note'),
     dTaste: $('#d-taste'),
     dLink: $('#d-link'),
-    dClose: $('#d-close')
+    dClose: $('#d-close'),
+    owner: $('#owner'),
+    authchip: $('#authchip'),
+    opstatus: $('#opstatus')
   };
 
   const S = {
@@ -211,7 +243,7 @@
 
   function stateUrl(opts) {
     const bust = (opts && opts.bust === false) ? '' : ((opts && opts.bust) || '?t=' + Date.now());
-    if (!DEV) return CFG.state + (bust || '?t=' + Date.now());
+    if (!DEV) return api(CFG.state) + (bust || '?t=' + Date.now());
     const file = (opts && opts.next) ? CFG.fixtureNext : CFG.fixtureBase;
     return file + (bust || '?t=' + Date.now());
   }
@@ -813,66 +845,192 @@
     }, CFG.closeMs);
   }
 
+  /* --------------------------------------------------------------- owner auth  */
+  /* The owner token lives in sessionStorage only: never in the URL, localStorage, the
+     source or a log line. Without it the page is read-only - browsing, the drawer and the
+     original links keep working, the write controls are disabled with an explicit reason. */
+  let OWNER = false;
+
+  function ownerToken() {
+    try { return sessionStorage.getItem(CFG.ssOwner) || ''; } catch (err) { return ''; }
+  }
+
+  function setOwnerToken(value) {
+    const token = (value || '').trim();
+    try {
+      if (token) sessionStorage.setItem(CFG.ssOwner, token);
+      else sessionStorage.removeItem(CFG.ssOwner);
+    } catch (err) { /* storage blocked: stay read-only */ }
+    OWNER = !!token;
+    return OWNER;
+  }
+
+  function canWrite() { return DEV || OWNER; }
+
+  function authHeaders(extra) {
+    const h = Object.assign({}, extra || {});
+    const token = ownerToken();
+    if (token) h.Authorization = 'Bearer ' + token;
+    return h;
+  }
+
+  function setOpStatus(message, ok) {
+    if (!el.opstatus) return;
+    el.opstatus.hidden = !message;
+    el.opstatus.textContent = message || '';
+    el.opstatus.title = message || '';
+    el.opstatus.classList.toggle('chip--warn', !ok && !!message);
+    el.opstatus.classList.toggle('chip--ok', !!ok && !!message);
+  }
+
+  const WRITE_CONTROLS = () => [
+    [el.refresh, '刷新'],
+    [el.dQueue, '改待读'],
+    [el.dKeep, '投票'],
+    [el.dSkip, '投票']
+  ];
+
+  function refreshAuthUi() {
+    OWNER = !!ownerToken();
+    const writable = canWrite();
+    if (el.authchip) {
+      el.authchip.hidden = false;
+      el.authchip.textContent = DEV ? 'DEV · 只读' : (OWNER ? '已连接 · 可写' : '只读');
+      el.authchip.title = OWNER
+        ? 'owner token 保存在本标签页的 sessionStorage，关掉标签页即失效'
+        : '只读：写入（待读/投票/刷新）已禁用。点右上「管理」粘贴 owner token 后开启。';
+      el.authchip.classList.toggle('chip--ok', OWNER && !DEV);
+    }
+    if (el.owner) {
+      el.owner.textContent = OWNER ? '管理 · 已连接' : '管理';
+      el.owner.title = OWNER ? '点这里可清除 token（回到只读）' : '点这里粘贴 owner token（只保存在本标签页）';
+    }
+    WRITE_CONTROLS().forEach((pair) => {
+      const btn = pair[0];
+      if (!btn) return;
+      btn.disabled = !writable;
+      btn.title = writable ? '' : '只读模式：' + pair[1] + '需要 owner token，点右上「管理」填入';
+    });
+  }
+
+  function opErrorText(status, data) {
+    if (status === 401) return '写入被拒（401）：token 无效或已失效，请重新点「管理」';
+    if (status === 403) return '请求被拒（403）：来源不在后端允许列表';
+    if (status === 404) return '写入失败（404）：目标不存在';
+    if (status === 413) return '写入失败（413）：请求体过大';
+    if (status === 503) return '写入已关闭（503）：后端还没有配置 owner token';
+    return '写入失败：HTTP ' + status + ((data && data.error) ? ' · ' + data.error : '');
+  }
+
+  /* Every write goes through here. It waits for the server's acknowledgement, surfaces the
+     failure instead of pretending success, and re-enables the control in `finally`. */
+  async function mutate(path, body, btn) {
+    if (DEV) return { ok: true, dev: true, data: {} };   /* fixture mode: local only */
+    if (!OWNER) {
+      setOpStatus('只读模式：点右上「管理」填入 owner token 才能写入', false);
+      return { ok: false, reason: 'read-only' };
+    }
+    if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', '1'); }
+    try {
+      const res = await fetch(api(path), {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(body || {})
+      });
+      let data = null;
+      try { data = await res.json(); } catch (err) { data = null; }
+      if (!res.ok) {
+        setOpStatus(opErrorText(res.status, data), false);
+        return { ok: false, status: res.status, data: data };
+      }
+      setOpStatus('', true);
+      return { ok: true, status: res.status, data: data || {} };
+    } catch (err) {
+      setOpStatus('网络错误：' + ((err && err.message) ? err.message : '写入请求失败'), false);
+      return { ok: false, reason: 'network' };
+    } finally {
+      if (btn) { btn.removeAttribute('aria-busy'); btn.disabled = !canWrite(); }
+    }
+  }
+
   /* ----------------------------------------------------------------- queue  */
 
-  function postQueue() {
-    if (DEV) return; /* no backend behind the fixture — stay quiet */
-    try {
-      fetch(CFG.queue, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ queue: Array.from(S.queue) })
-      }).catch(() => { /* fire and forget */ });
-    } catch (err) { /* fire and forget */ }
+  /* The server's queue is authoritative: replace the local copy with the queue from the
+     mutation response (or from GET /api/queue) instead of unioning a stale cache. */
+  function applyQueueSnapshot(data) {
+    if (data && Array.isArray(data.queue)) {
+      S.queue = new Set(data.queue.map(Number).filter(Number.isFinite));
+      writeIds(CFG.lsQueue, S.queue);
+    }
+    render(captureRects(), null);
+    updateCounts();
+    if (S.openId) {
+      const t = S.topics.get(S.openId);
+      if (t) fillDrawer(t);
+    }
   }
 
-  function toggleQueue(id) {
+  async function toggleQueue(id) {
     const t = S.topics.get(id);
     if (!t || t.state !== 'picked') return;
-    const prevRects = captureRects();
-    if (S.queue.has(id)) S.queue.delete(id);
-    else S.queue.add(id);
-    writeIds(CFG.lsQueue, S.queue);
-    postQueue();
-    render(prevRects, null);
-    updateCounts();
-    if (S.openId === id) fillDrawer(t);
+    if (DEV) {          /* fixture mode: a local interaction, no backend behind it */
+      const prevRects = captureRects();
+      if (S.queue.has(id)) S.queue.delete(id);
+      else S.queue.add(id);
+      writeIds(CFG.lsQueue, S.queue);
+      render(prevRects, null);
+      updateCounts();
+      if (S.openId === id) fillDrawer(t);
+      return;
+    }
+    if (!OWNER) {
+      setOpStatus('只读模式：改待读需要 owner token，点右上「管理」填入', false);
+      return;
+    }
+    const add = !S.queue.has(id);
+    const res = await mutate(CFG.queue, add ? { add: id } : { remove: id }, S.openId === id ? el.dQueue : null);
+    if (!res.ok) return;               /* the column only moves after the server agrees */
+    applyQueueSnapshot(res.data);
   }
 
-  function postVote(id, vote) {
-    if (DEV) return;
-    const note = (el.dNote && el.dNote.value || '').trim();
-    try {
-      fetch(CFG.feedback, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: id, vote: vote, note: note })
-      }).catch(() => { /* fire and forget */ });
-    } catch (err) { /* fire and forget */ }
-  }
-
-  function applyVote(id, vote) {
+  async function applyVote(id, vote) {
     const t = S.topics.get(id);
     if (!t) return;
-    const prevRects = captureRects();
-    S.votes.set(id, vote);
-    if (vote === 'keep') {
-      t.state = 'picked';
-      t.rescued = true;
-      if (!S.queue.has(id)) S.queue.add(id);
+    if (DEV) {          /* fixture mode: exercise the interaction locally */
+      const prevRects = captureRects();
+      S.votes.set(id, vote);
+      if (vote === 'keep') {
+        t.state = 'picked';
+        t.rescued = true;
+        if (!S.queue.has(id)) S.queue.add(id);
+      } else if (vote === 'skip') {
+        t.state = 'rejected';
+        t.skipped = true;
+        if (S.queue.has(id)) S.queue.delete(id);
+      }
       writeIds(CFG.lsQueue, S.queue);
-      postQueue();
-    } else if (vote === 'skip') {
-      t.state = 'rejected';
-      t.skipped = true;
-      if (S.queue.has(id)) S.queue.delete(id);
-      writeIds(CFG.lsQueue, S.queue);
-      postQueue();
+      render(prevRects, null);
+      updateCounts();
+      fillDrawer(t);
+      return;
     }
-    postVote(id, vote);
-    render(prevRects, null);
-    updateCounts();
-    fillDrawer(t);
+    if (!OWNER) {
+      setOpStatus('只读模式：投票需要 owner token，点右上「管理」填入', false);
+      return;
+    }
+    const note = (el.dNote && el.dNote.value || '').trim();
+    const btn = vote === 'keep' ? el.dKeep : el.dSkip;
+    /* one request: the server moves the topic, updates the queue and saves before answering */
+    const res = await mutate(CFG.feedback, { id: id, vote: vote, note: note }, btn);
+    if (!res.ok) return;               /* nothing changes locally on failure */
+    const payload = res.data || {};
+    if (payload.topic) {
+      t.state = payload.topic.state;
+      if (payload.topic.rescued) t.rescued = true;
+      if (payload.topic.skipped) t.skipped = true;
+    }
+    S.votes.set(id, vote);
+    applyQueueSnapshot(payload);
   }
 
   /* ---------------------------------------------------------------- events */
@@ -978,16 +1136,49 @@
         const ok = await pull({ next: true });
         if (!ok) await pull({});
       } else {
-        try {
-          await fetch(CFG.refresh, { method: 'POST' }).catch(() => {});
-        } catch (err) { /* fire and forget */ }
-        await new Promise((r) => window.setTimeout(r, 1200));
+        if (!OWNER) {
+          setOpStatus('只读模式：刷新会触发服务端抓取，需要 owner token（点右上「管理」）', false);
+          return;
+        }
+        /* explicit acknowledgement: a refused refresh stays visible instead of looking fine */
+        const res = await mutate(CFG.refresh, {}, el.refresh);
+        if (!res.ok) return;
+        await sleep(1200);
         await pull({});
       }
     } finally {
       el.refresh.removeAttribute('aria-busy');
       el.refresh.textContent = '刷新';
+      el.refresh.disabled = !canWrite();
     }
+  });
+
+  el.owner.addEventListener('click', async () => {
+    if (DEV) {
+      setOpStatus('fixture 模式：交互只在本地生效，不需要 token', true);
+      return;
+    }
+    const entered = window.prompt(
+      OWNER ? '已连接。粘贴新的 owner token，留空则清除（只保存在本标签页）'
+            : '粘贴 owner token（只保存在本标签页 sessionStorage，关掉标签页即失效）',
+      ''
+    );
+    if (entered === null) return;               /* cancelled: keep whatever was there */
+    setOwnerToken(entered);
+    refreshAuthUi();
+    if (!OWNER) {
+      setOpStatus('已清除 token：回到只读模式', true);
+      return;
+    }
+    /* verify against the server instead of claiming it works */
+    try {
+      const res = await fetch(api(CFG.feedback), { cache: 'no-store', headers: authHeaders() });
+      if (res.ok) setOpStatus('已连接：可以改待读 / 投票 / 刷新', true);
+      else setOpStatus(opErrorText(res.status, null) + '（token 已保留，可改后再试）', false);
+    } catch (err) {
+      setOpStatus('token 已保存，但校验请求失败：' + ((err && err.message) ? err.message : '网络错误'), false);
+    }
+    await loadVotes();
   });
 
   el.retry.addEventListener('click', async () => {
@@ -1072,10 +1263,14 @@
   /* ------------------------------------------------------------------ init  */
 
   async function loadVotes() {
-    if (DEV) return;
+    if (DEV || !OWNER) return;   /* owner notes are not public: no anonymous request */
     try {
-      const res = await fetch(CFG.feedback, { cache: 'no-store' });
-      if (!res.ok) return;
+      const res = await fetch(api(CFG.feedback), { cache: 'no-store', headers: authHeaders() });
+      if (!res.ok) {
+        if (res.status === 401) setOpStatus('owner token 无效（401）：写入被拒，请重新点「管理」', false);
+        else if (res.status === 503) setOpStatus('后端未配置 owner token（503）：写入整体关闭', false);
+        return;
+      }
       const data = await res.json();
       const rows = Array.isArray(data.feedback) ? data.feedback : [];
       rows.forEach((row) => {
@@ -1086,23 +1281,23 @@
   }
 
   async function loadQueue() {
-    S.queue = readIds(CFG.lsQueue);
-    if (DEV) return;
+    if (DEV) {                       /* fixture mode: the local copy is the whole story */
+      S.queue = readIds(CFG.lsQueue);
+      return;
+    }
     try {
-      const res = await fetch(CFG.queue, { cache: 'no-store' });
-      if (!res.ok) return;
+      const res = await fetch(api(CFG.queue), { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
-      const ids = Array.isArray(data.queue) ? data.queue : [];
-      let changed = false;
-      ids.forEach((id) => {
-        const n = Number(id);
-        if (Number.isFinite(n) && !S.queue.has(n)) { S.queue.add(n); changed = true; }
-      });
-      if (changed) {
-        writeIds(CFG.lsQueue, S.queue);
-        if (S.data) { render(captureRects(), null); updateCounts(); }
-      }
-    } catch (err) { /* offline: localStorage copy stands */ }
+      const ids = Array.isArray(data.queue) ? data.queue.map(Number).filter(Number.isFinite) : [];
+      /* the server's list replaces the local copy: no union with a stale cache */
+      S.queue = new Set(ids);
+      writeIds(CFG.lsQueue, S.queue);
+      if (S.data) { render(captureRects(), null); updateCounts(); }
+    } catch (err) {
+      S.queue = readIds(CFG.lsQueue);   /* offline: last known copy, clearly provisional */
+      setOpStatus('待读列表来自本地缓存（没连上后端）', false);
+    }
   }
 
   async function checkHealth() {
@@ -1114,7 +1309,7 @@
       return;
     }
     try {
-      const res = await fetch(CFG.health, { cache: 'no-store' });
+      const res = await fetch(api(CFG.health), { cache: 'no-store' });
       if (!res.ok) return;
       const h = await res.json();
       const att = h.attention || {};
@@ -1123,6 +1318,10 @@
         el.warnchip.title = att.reason || '需要人工排查';
       } else {
         el.warnchip.hidden = true;
+      }
+      if (h.auth && h.auth.token_configured === false && el.authchip) {
+        /* the backend has no token at all: writes are closed for everyone, not just here */
+        el.authchip.title = el.authchip.title + '（后端未配置 owner token：写入整体关闭）';
       }
     } catch (err) { /* health is optional for rendering */ }
   }
@@ -1151,6 +1350,7 @@
 
   async function init() {
     initFromUrl();
+    refreshAuthUi();
     S.seen = readIds(CFG.lsSeen);
     renderSkeleton();
     S.occupied = new Set();

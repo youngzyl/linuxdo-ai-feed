@@ -13,19 +13,79 @@ Endpoints
 """
 from __future__ import annotations
 
+import hmac
 import json
 import mimetypes
+import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from config import FIXTURE_DIR, PUBLIC_DIR
+from config import FIXTURE_DIR, PUBLIC_DIR, allowed_origins, normalize_origin, owner_token
 from store import now_iso
 import learn as learn_mod
 
 MAX_BODY = 64 * 1024
+
+# Methods that can change state. Anything outside this set on a known route is a 405.
+ALLOWED_METHODS = ("GET", "POST", "OPTIONS")
+# Endpoints that need the owner token. Reads of /api/state, /health, /metrics, /api/queue,
+# the static files and the fixtures stay anonymous.
+OWNER_ROUTES = {
+    ("POST", "/api/queue"),
+    ("POST", "/api/feedback"),
+    ("POST", "/api/refresh"),
+    ("GET", "/api/feedback"),   # raw owner notes
+    ("GET", "/api/failures"),   # raw upstream errors
+}
+PREFLIGHT_HEADERS = ("content-type", "authorization")
+PREFLIGHT_METHODS = ("GET", "POST")
+
+
+def bearer_token(header_value: str | None) -> str | None:
+    """The token from an `Authorization: Bearer <token>` header, or None."""
+    if not header_value:
+        return None
+    parts = header_value.split(None, 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return None
+    token = parts[1].strip()
+    return token or None
+
+
+def token_matches(candidate: str | None, expected: str | None) -> bool:
+    """Constant-time comparison; False whenever either side is missing."""
+    if not candidate or not expected:
+        return False
+    return hmac.compare_digest(candidate.encode("utf-8"), expected.encode("utf-8"))
+
+
+def _within_roots(target: Path, roots: list[Path]) -> bool:
+    """Is `target` one of `roots` or below one of them?
+
+    Compares resolved ancestry (`target == root or root in target.parents`) instead of
+    string prefixes: a sibling directory named `public-other` shares the character prefix
+    of `public` but is not inside it, so `startswith` let it through. Both arguments are
+    expected to be resolved paths.
+    """
+    for root in roots:
+        if target == root or root in target.parents:
+            return True
+    return False
+
+
+def _topic_brief(topic: dict | None) -> dict | None:
+    """The few topic fields a mutation response needs to keep the UI in sync."""
+    if not topic:
+        return None
+    return {
+        "id": int(topic.get("id") or 0),
+        "state": topic.get("state"),
+        "rescued": bool(topic.get("rescued")),
+        "skipped": bool(topic.get("skipped")),
+    }
 
 
 class App:
@@ -69,37 +129,80 @@ def make_handler(app: App):
         def log_message(self, fmt, *args):  # route access logs into our logger
             app.log(f'http {self.address_string()} {fmt % args}')
 
-        def _send(self, status: int, body: bytes, content_type: str, *, headers: dict | None = None):
+        def _send(self, status: int, body: bytes, content_type: str, *, headers: dict | None = None) -> bool:
+            """Write a response. Returns True so callers can `return self._send(...)` as a
+            'handled' signal - a refusal helper that returned None would let the route
+            continue and perform the very mutation it just refused."""
             self.send_response(status)
             self.send_header("content-type", content_type)
             self.send_header("content-length", str(len(body)))
             self.send_header("cache-control", "no-store")
             self.send_header("x-content-type-options", "nosniff")
-            for key, value in (headers or {}).items():
+            # CORS response headers for the exact request origin (if it is allowed), plus
+            # Vary: Origin so a shared cache never serves one origin's grant to another.
+            # No Access-Control-Allow-Credentials: the API never uses cookies.
+            merged = dict(getattr(self, "_cors", None) or {})
+            merged.setdefault("vary", "Origin")
+            merged.update(headers or {})
+            for key, value in merged.items():
                 self.send_header(key, value)
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(body)
+            return True
 
-        def json_response(self, status: int, payload) -> None:
+        def json_response(self, status: int, payload, *, headers: dict | None = None) -> bool:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            self._send(status, body, "application/json; charset=utf-8")
+            return self._send(status, body, "application/json; charset=utf-8", headers=headers)
 
-        def error_json(self, status: int, message: str) -> None:
-            self.json_response(status, {"error": message, "status": status})
+        def error_json(self, status: int, message: str, *, headers: dict | None = None) -> bool:
+            return self.json_response(status, {"error": message, "status": status}, headers=headers)
 
-        def read_json_body(self):
+        def _cors_headers(self, origin: str | None) -> dict:
+            """Headers for an allowed origin, or {} - never a wildcard or a reflection."""
+            if not origin:
+                return {}
+            if normalize_origin(origin) not in allowed_origins(app.cfg):
+                return {}
+            return {"access-control-allow-origin": origin}
+
+        def _origin_allowed(self, origin: str | None) -> bool:
+            return bool(origin) and normalize_origin(origin) in allowed_origins(app.cfg)
+
+        def _read_json(self) -> tuple[dict | None, tuple[int, str] | None]:
+            """(payload, error). 400 for a bad/!object body, 413 when it is too large."""
             try:
                 length = int(self.headers.get("content-length") or 0)
             except ValueError:
-                return {}
-            if length <= 0 or length > MAX_BODY:
-                return {}
+                return None, (400, "invalid content-length")
+            if length < 0:
+                return None, (400, "invalid content-length")
+            if length > MAX_BODY:
+                self.close_connection = True  # the unread body would desync HTTP/1.1
+                return None, (413, f"body too large (max {MAX_BODY} bytes)")
+            if length == 0:
+                return {}, None
             raw = self.rfile.read(length)
+            if not raw.strip():
+                return {}, None
             try:
-                return json.loads(raw.decode("utf-8"))
+                payload = json.loads(raw.decode("utf-8"))
             except Exception:
-                return {}
+                return None, (400, "invalid JSON body")
+            if not isinstance(payload, dict):
+                return None, (400, "JSON body must be an object")
+            return payload, None
+
+        def _body_declared(self) -> bool:
+            """True when the request announces a body that a refused route will not read.
+
+            The bytes stay in the socket, where a persistent connection would parse the next
+            request out of them, so the caller closes the connection instead.
+            """
+            if (self.headers.get("transfer-encoding") or "").strip():
+                return True
+            length = (self.headers.get("content-length") or "").strip()
+            return bool(length) and length != "0"
 
         # ----------------------------------------------------------------- verbs
         def do_GET(self):
@@ -111,11 +214,94 @@ def make_handler(app: App):
         def do_POST(self):
             self._route("POST")
 
+        def do_OPTIONS(self):
+            self._route("OPTIONS")
+
+        def do_PUT(self):
+            self._route("PUT")
+
+        def do_PATCH(self):
+            self._route("PATCH")
+
+        def do_DELETE(self):
+            self._route("DELETE")
+
+        def _method_not_allowed(self, allow: str = "GET, POST, OPTIONS"):
+            return self.error_json(405, "method not allowed", headers={"allow": allow})
+
+        def _preflight(self, origin: str | None):
+            """CORS preflight: exact origin, GET/POST only, Content-Type/Authorization only."""
+            if not origin:
+                return self.error_json(403, "origin required")
+            if not self._origin_allowed(origin):
+                return self.error_json(403, "origin not allowed")
+            wanted = (self.headers.get("access-control-request-method") or "GET").strip().upper()
+            if wanted not in PREFLIGHT_METHODS:
+                self._cors = {}
+                return self.error_json(403, f"method {wanted} not allowed")
+            asked = [h.strip().lower() for h in (self.headers.get("access-control-request-headers") or "").split(",") if h.strip()]
+            bad = [h for h in asked if h not in PREFLIGHT_HEADERS]
+            if bad:
+                self._cors = {}  # a refused preflight gets no grant, not even ACAO
+                return self.error_json(403, "headers not allowed: " + ", ".join(bad))
+            self._cors = {"access-control-allow-origin": origin}
+            return self._send(
+                204,
+                b"",
+                "text/plain; charset=utf-8",
+                headers={
+                    "access-control-allow-methods": ", ".join(PREFLIGHT_METHODS),
+                    "access-control-allow-headers": "Content-Type, Authorization",
+                    "access-control-max-age": "600",
+                },
+            )
+
+        def _owner_gate(self, path: str, origin: str | None):
+            """None to proceed, otherwise the refusal response.
+
+            Order: no configured token => 503 (fail closed) for every owner endpoint;
+            a present-but-not-allowed Origin => 403 even with a valid bearer; a missing or
+            wrong bearer => 401. A request without an Origin header is allowed only when it
+            is authenticated, which the bearer check enforces.
+            """
+            token, _source = owner_token()
+            if not token:
+                return self.error_json(503, "owner token not configured: writes are disabled")
+            if origin is not None and not self._origin_allowed(origin):
+                return self.error_json(403, "origin not allowed")
+            if not token_matches(bearer_token(self.headers.get("authorization")), token):
+                return self.error_json(401, "unauthorized")
+            return None
+
         def _route(self, method: str):
             parsed = urlparse(self.path)
             path = unquote(parsed.path)
             query = parse_qs(parsed.query)
+            origin = self.headers.get("origin")
+            self._cors = self._cors_headers(origin)
             try:
+                if method == "OPTIONS":
+                    return self._preflight(origin)
+                if method not in ALLOWED_METHODS:
+                    return self._method_not_allowed(
+                        "POST, OPTIONS" if path in {"/api/refresh", "/api/queue", "/api/feedback"} else "GET, POST, OPTIONS"
+                    )
+                if path == "/api/refresh" and method != "POST":
+                    return self._method_not_allowed("POST")
+                # Method policy for the raw owner reads (lead-authored): /api/failures answers
+                # only the effective GET (do_HEAD maps to GET) and OPTIONS. Every other
+                # dispatched method is refused HERE - before the owner gate and before any
+                # payload access. Dispatch used to key on the path alone, so a POST skipped
+                # the gate below and fell into the read branch, handing the raw failure feed
+                # to an unauthenticated caller.
+                if path == "/api/failures" and method not in ("GET", "OPTIONS"):
+                    if self._body_declared():
+                        self.close_connection = True  # the unread body would desync HTTP/1.1
+                    return self._method_not_allowed("GET, HEAD, OPTIONS")
+                if (method, path) in OWNER_ROUTES:
+                    denial = self._owner_gate(path, origin)
+                    if denial is not None:
+                        return denial
                 if path in ("/", "/index.html"):
                     return self.serve_file(PUBLIC_DIR / "index.html")
                 if path == "/api/state":
@@ -130,7 +316,9 @@ def make_handler(app: App):
                     return self.json_response(200, {"failures": app.store.recent_failures(n)})
                 if path == "/api/queue":
                     if method == "POST":
-                        payload = self.read_json_body()
+                        payload, body_error = self._read_json()
+                        if body_error is not None:
+                            return self.error_json(*body_error)
                         if isinstance(payload.get("queue"), list):
                             ids = app.store.queue_set(payload["queue"])
                         elif payload.get("add") is not None:
@@ -140,11 +328,15 @@ def make_handler(app: App):
                         else:
                             return self.error_json(400, "expected queue[] / add / remove")
                         app.store.save()
-                        return self.json_response(200, {"queue": ids})
-                    return self.json_response(200, {"queue": app.store.queue()})
+                        # the server's own copy is the answer: the client never sends a
+                        # whole-queue replacement and never merges a stale local list
+                        return self.json_response(200, {"queue": ids, "counts": app.store.counts()})
+                    return self.json_response(200, {"queue": app.store.queue(), "counts": app.store.counts()})
                 if path == "/api/feedback":
                     if method == "POST":
-                        payload = self.read_json_body()
+                        payload, body_error = self._read_json()
+                        if body_error is not None:
+                            return self.error_json(*body_error)
                         try:
                             tid = int(payload.get("id"))
                         except (TypeError, ValueError):
@@ -153,15 +345,43 @@ def make_handler(app: App):
                         note = payload.get("note") or ""
                         if vote == "clear":
                             learn_mod.remove(app.store, tid)
-                            return self.json_response(200, {"ok": True, "cleared": tid, "counts": learn_mod.counts(app.store)})
+                            topic = app.store.get(tid)
+                            return self.json_response(
+                                200,
+                                {
+                                    "ok": True,
+                                    "cleared": tid,
+                                    "topic": _topic_brief(topic),
+                                    "queue": app.store.queue(),
+                                    "counts": app.store.counts(),
+                                    "votes": learn_mod.counts(app.store),
+                                },
+                            )
                         try:
                             entry = learn_mod.record(app.store, tid, vote, note)
                         except ValueError as exc:
                             return self.error_json(400, str(exc))
                         except KeyError as exc:
                             return self.error_json(404, str(exc))
-                        return self.json_response(200, {"ok": True, "entry": entry, "counts": learn_mod.counts(app.store)})
-                    return self.json_response(200, {"feedback": learn_mod.all_votes(app.store), "counts": learn_mod.counts(app.store)})
+                        # keep/skip already moved the queue inside one locked, saved update
+                        return self.json_response(
+                            200,
+                            {
+                                "ok": True,
+                                "entry": entry,
+                                "topic": _topic_brief(app.store.get(tid)),
+                                "queue": app.store.queue(),
+                                "counts": app.store.counts(),
+                                "votes": learn_mod.counts(app.store),
+                            },
+                        )
+                    return self.json_response(
+                        200,
+                        {
+                            "feedback": learn_mod.all_votes(app.store),
+                            "counts": learn_mod.counts(app.store),
+                        },
+                    )
                 if path == "/api/refresh" and method == "POST":
                     result = app.trigger_refresh()
                     payload = app.store.api_payload(cfg=app.cfg, uptime_s=app.uptime())
@@ -187,7 +407,7 @@ def make_handler(app: App):
             except Exception:
                 return self.error_json(404, "bad path")
             roots = [PUBLIC_DIR.resolve()] + ([FIXTURE_DIR.resolve()] if allow_any else [])
-            if not any(str(target).startswith(str(root)) for root in roots):
+            if not _within_roots(target, roots):
                 return self.error_json(403, "forbidden")
             if not target.is_file():
                 return self.error_json(404, f"not found: {path.name}")
@@ -204,4 +424,9 @@ def build_server(cfg: dict, app: App) -> ThreadingHTTPServer:
     handler = make_handler(app)
     httpd = ThreadingHTTPServer((cfg["host"], int(cfg["port"])), handler)
     httpd.daemon_threads = True
+    _token, source = owner_token()
+    origins = ", ".join(sorted(allowed_origins(cfg))) or "-"
+    # source label only: the token value is never logged
+    app.log(f"owner writes {'enabled' if _token else 'DISABLED (503 until a token is configured)'} [{source or 'no token configured'}]")
+    app.log(f"cors allowlist: {origins}")
     return httpd

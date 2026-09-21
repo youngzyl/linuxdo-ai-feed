@@ -12,12 +12,21 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 LOG_DIR = ROOT / "logs"
 PUBLIC_DIR = ROOT / "public"
 FIXTURE_DIR = ROOT / "fixtures"
+
+# The owner token is a *server-side* secret: it authorises writes and owner-only reads.
+# It is read from the environment only - never from config.json (which is committed),
+# never from a request payload, and it is never logged or returned.
+OWNER_TOKEN_ENV = "LINUXDO_AI_OWNER_TOKEN"
+OWNER_TOKEN_FILE_ENV = "LINUXDO_AI_OWNER_TOKEN_FILE"
+# Exact CORS allowlist, comma separated. No wildcard, no reflection.
+ALLOWED_ORIGINS_ENV = "LINUXDO_AI_ALLOWED_ORIGINS"
 
 DEFAULTS: dict = {
     "host": "127.0.0.1",
@@ -198,4 +207,84 @@ def redact(text: str | None) -> str | None:
     key, _ = resolve_api_key()
     if key and len(key) > 8:
         out = out.replace(key, "<redacted>")
+    token, _ = owner_token()
+    if token and len(token) > 3:
+        out = out.replace(token, "<redacted>")
+    return out
+
+
+# ------------------------------------------------------------------- owner boundary
+def owner_token() -> tuple[str | None, str | None]:
+    """The owner token and a *secret-free* source label, or (None, None).
+
+    Resolution order: `LINUXDO_AI_OWNER_TOKEN`, then the file named by
+    `LINUXDO_AI_OWNER_TOKEN_FILE`. A missing/unreadable/empty file resolves to no token,
+    which makes every owner-only endpoint fail closed (503).
+    """
+    _, value = env_ci(OWNER_TOKEN_ENV)
+    if value:
+        return value, f"env:{OWNER_TOKEN_ENV}"
+    _, path = env_ci(OWNER_TOKEN_FILE_ENV)
+    if path:
+        try:
+            text = Path(path).expanduser().read_text(encoding="utf-8").strip()
+        except Exception:
+            return None, f"unreadable:{path}"
+        if text:
+            return text, f"file:{path}"
+        return None, f"empty:{path}"
+    return None, None
+
+
+def normalize_origin(value: str | None) -> str | None:
+    """`scheme://host:port` with defaults filled in, or None when unusable.
+
+    `*`, a bare host, a path-only string or a non-http(s) scheme all return None: the CORS
+    list is an exact allowlist and wildcards are never honoured.
+    """
+    text = (value or "").strip()
+    if not text or text == "*":
+        return None
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return None
+    scheme = (parts.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        return None
+    host = (parts.hostname or "").lower()
+    if not host:
+        return None
+    try:
+        port = parts.port
+    except ValueError:
+        return None
+    if port is None:
+        port = 443 if scheme == "https" else 80
+    return f"{scheme}://{host}:{port}"
+
+
+def allowed_origins(cfg: dict | None = None) -> set[str]:
+    """Exact allowlist of browser origins permitted to call this API.
+
+    `LINUXDO_AI_ALLOWED_ORIGINS` (CSV) wins when set; otherwise the service's own
+    origin(s) - same-origin frontends send `Origin` on POST too, so they must be listed.
+    """
+    _, raw = env_ci(ALLOWED_ORIGINS_ENV)
+    out: set[str] = set()
+    if raw is not None and raw.strip():
+        for chunk in raw.split(","):
+            origin = normalize_origin(chunk)
+            if origin:
+                out.add(origin)
+        return out
+    host = str((cfg or {}).get("host") or "127.0.0.1")
+    try:
+        port = int((cfg or {}).get("port") or 8791)
+    except (TypeError, ValueError):
+        port = 8791
+    for candidate in (f"http://{host}:{port}", f"http://127.0.0.1:{port}", f"http://localhost:{port}"):
+        origin = normalize_origin(candidate)
+        if origin:
+            out.add(origin)
     return out

@@ -5,13 +5,23 @@ Designed to be used as a cron *monitor*: the output must be stable while the
 collector is healthy, so the agent stays asleep, and must change the moment
 something needs a human. No timestamps, no counters that drift.
 
-Two sources, so it works both next to the service and on the host:
-  1. HTTP  GET http://127.0.0.1:8791/health      (when the service is reachable)
-  2. file  <project>/data/state.json + logs/     (when it is not)
+Sources, in order:
+  1. `LINUXDO_AI_HEALTH_URL` - an explicit remote health endpoint, e.g.
+     https://tcstw.youngzyl.me:8443/linuxdo-api/health. If it is set, it is the ONLY
+     source: when the remote probe fails the probe reports source=http/service=down/
+     attention=1/stale=1 and never falls back to the local files, because a stale-but-
+     healthy local snapshot would mask a real outage (that is exactly the failure mode of
+     a cutover to a remote deployment). TLS is always verified and the timeout is bounded.
+  2. no explicit URL: GET http://<LINUXDO_AI_HOST>:<PORT>/health (the local service).
+  3. no explicit URL and no local HTTP route (typical for a probe that runs on the host
+     while the collector runs in a container): judge from <project>/data/state.json.
+
+A configured URL that is not a usable absolute https URL is *rejected* - output
+source=config/attention=1 - rather than silently treated as "no override".
 
 Output lines:
-  source=http|file
-  service=up|unknown
+  source=http|file|config
+  service=up|down|unknown
   attention=0|1
   consecutive_failures=N
   stale=0|1
@@ -27,11 +37,15 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 HOST = os.environ.get("LINUXDO_AI_HOST", "127.0.0.1")
 PORT = os.environ.get("LINUXDO_AI_PORT", "8791")
 STALE_AFTER = float(os.environ.get("LINUXDO_AI_STALE_S", "2700"))
+HEALTH_URL_ENV = "LINUXDO_AI_HEALTH_URL"
+# Bounded: a monitor probe must not hang a cron tick.
+HEALTH_TIMEOUT_S = float(os.environ.get("LINUXDO_AI_HEALTH_TIMEOUT_S", "6"))
 
 
 def sanitize(text) -> str:
@@ -53,13 +67,68 @@ def parse_iso(value) -> float | None:
         return None
 
 
-def from_http() -> dict | None:
-    url = f"http://{HOST}:{PORT}/health"
+def explicit_health_url() -> str | None:
+    """The configured remote health endpoint, or None when no override is configured.
+
+    An empty/whitespace value means "not configured" on purpose: it is how a deployment
+    disables the override without unsetting the variable.
+    """
+    raw = os.environ.get(HEALTH_URL_ENV)
+    if raw is None:
+        return None
+    text = raw.strip()
+    return text or None
+
+
+def health_url_error(url: str) -> str | None:
+    """Why this configured URL is unusable, or None when it is fine.
+
+    Requires an absolute https URL with a host and no embedded credentials. Plain http is
+    refused even for a loopback address: the override exists for the remote deployment, and
+    an unverified-hops probe could be forged to hide an outage.
+    """
     try:
-        with urllib.request.urlopen(url, timeout=6) as resp:
+        parts = urlsplit(url)
+    except ValueError as exc:
+        return f"unparseable ({exc})"
+    if parts.scheme.lower() != "https":
+        return "scheme must be https"
+    if not parts.hostname:
+        return "no host"
+    if parts.username or parts.password:
+        return "must not embed credentials"
+    return None
+
+
+def fetch_health(url: str) -> dict | None:
+    """GET a health payload over verified TLS, bounded by HEALTH_TIMEOUT_S.
+
+    urllib's default context verifies certificates and hostnames; nothing here overrides it.
+    """
+    try:
+        with urllib.request.urlopen(url, timeout=HEALTH_TIMEOUT_S) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception:
         return None
+
+
+def local_health_url() -> str:
+    return f"http://{HOST}:{PORT}/health"
+
+
+def failure_payload(reason: str, error: str) -> dict:
+    """A failure payload whose printed signature survives `sanitize`.
+
+    monitor.py prints `attention.reason` in preference to `last_error` (historical
+    behaviour), so the stable machine signature is embedded in the reason text as well -
+    the watchdog's signature and the cron monitor's before/after diff both see it.
+    """
+    return {
+        "attention": {"needed": True, "reason": f"{error}: {reason}"},
+        "consecutive_failures": 0,
+        "last_success_at": None,
+        "last_error": error,
+    }
 
 
 def from_files() -> dict:
@@ -90,23 +159,51 @@ def from_files() -> dict:
     }
 
 
+def select_payload() -> tuple[dict, str, str, bool]:
+    """(payload, source, service, forced_stale)."""
+    explicit = explicit_health_url()
+    if explicit is not None:
+        problem = health_url_error(explicit)
+        if problem is not None:
+            # fail loudly instead of pretending no override was configured
+            return (
+                failure_payload(f"configured health URL rejected: {problem}", "bad_health_url"),
+                "config",
+                "down",
+                True,
+            )
+        payload = fetch_health(explicit)
+        if payload is None:
+            host = urlsplit(explicit).hostname or "unknown"
+            return (
+                failure_payload(
+                    f"remote health probe failed: {host}",
+                    f"health_unreachable:{host}",
+                ),
+                "http",
+                "down",
+                True,
+            )
+        return payload, "http", "up", False
+
+    payload = fetch_health(local_health_url())
+    if payload is not None:
+        return payload, "http", "up", False
+    # no HTTP route to the service from here (e.g. this probe runs on the host and the
+    # collector runs in a container): judge from the state file instead
+    return from_files(), "file", "unknown", False
+
+
 def main() -> int:
-    payload = from_http()
-    source = "http"
     state_path = ROOT / "data" / "state.json"
     state_age = (time.time() - state_path.stat().st_mtime) if state_path.exists() else None
-    if payload is None:
-        # no HTTP route to the service from here (e.g. this probe runs on the host and
-        # the collector runs in a container): judge from the state file instead
-        source = "file"
-        payload = from_files()
-        service = "unknown"
-    else:
-        service = "up"
+    payload, source, service, forced_stale = select_payload()
 
     attention = bool((payload.get("attention") or {}).get("needed"))
     last_success = parse_iso(payload.get("last_success_at"))
-    if last_success is not None:
+    if forced_stale:
+        stale = 1
+    elif last_success is not None:
         stale = int((time.time() - last_success) > STALE_AFTER)
     else:
         # No cycle has finished yet: only stale once we are past the boot grace period,

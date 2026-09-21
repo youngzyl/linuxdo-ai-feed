@@ -1,0 +1,91 @@
+# Permanent deployment — 2026-09-22 (CST)
+
+## Live endpoints and ownership
+
+- Reader: https://youngzyl.github.io/linuxdo-ai-feed/
+- API base: https://tcstw.youngzyl.me:8443/linuxdo-api
+- Health: https://tcstw.youngzyl.me:8443/linuxdo-api/health
+- GitHub Pages source: `gh-pages`, `/`, HTTPS enforced. Static release: `a04e16bdbb73c02e22b5dd00431d625be0ccae18`.
+- Backend: `young@tcstw.youngzyl.me`, `/home/young/services/linuxdo-ai`.
+- User unit: `linuxdo-ai-feed.service`, enabled; user lingering is enabled.
+- Source: `/workspace/linuxdo-ai`, repository `youngzyl/linuxdo-ai-feed`.
+
+The backend is independent of the Hermes tool container. The retired local collector and its supervisor were stopped after a final state copy. Its files remain a rollback snapshot, not an active authority. The old temporary Cloudflare tunnel was stopped after the permanent frontend/API became usable. Never revive a second collector against the retired local state.
+
+## Access model
+
+Anonymous visitors can read the feed, previews and queue. Writes (queue, feedback, refresh) and raw feedback/failure reads require the owner bearer token. A missing configured token fails closed. Browser Origin checks are an exact allowlist, not a wildcard. The published page's API base is baked into `runtime-config.js`, never taken from an arbitrary URL query.
+
+Use the page's **管理** button to enter the owner token. The browser keeps it in `sessionStorage`, not localStorage or the URL. Token location on tcstw:
+
+`/home/young/.config/linuxdo-ai/owner-token`
+
+It is mode `0600` under a `0700` directory. Do not paste its contents into chat, commit it, put it in a URL, or pass it on a curl command line. The deployment tested valid, absent and wrong token cases through authenticated GETs only; production vote/queue/refresh POSTs were not used as tests.
+
+The service reads `/home/young/.config/linuxdo-ai/service.env` (mode `0600`). Relevant nonsecret settings:
+
+- `LINUXDO_AI_OWNER_TOKEN_FILE=/home/young/.config/linuxdo-ai/owner-token`
+- `LINUXDO_AI_ALLOWED_ORIGINS=https://youngzyl.github.io,https://tcstw.youngzyl.me:8443`
+
+The migrated filter still uses the previous `deepseek-chat` / `https://api.deepseek.com/v1` configuration. This is not proof that the planned CommandCode research route is available.
+
+## Runtime and transport
+
+`deploy/linuxdo-ai-feed.service` is the deployed unit source. It binds the application to loopback and applies `MemoryHigh=160M`, `MemoryMax=256M`, `CPUQuota=50%`, `TasksMax=32`, `NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=strict`, `ProtectHome=read-only`, and write access only to project `data` and `logs`. `UMask=0077` protects new state/log files. No hardening was removed to get the unit running.
+
+The existing root-managed Caddy container `xray_caddy_1` handles HTTPS on 8443. Only `/linuxdo-api/*` was added, stripping that prefix and forwarding to `127.0.0.1:8791`. Existing global port settings and unrelated proxy services were preserved. The pre-existing 443 listener was not replaced. TLS hostname/certificate verification remains enabled.
+
+Caddy configuration:
+
+- Host file: `/root/docker-compose/xray/config/caddy/Caddyfile`
+- Container mount: `/etc/caddy/Caddyfile`
+- Pre-change backup: `/root/docker-compose/xray/config/caddy/Caddyfile.bak-20260921T172323Z`
+
+This is a single-file bind mount: preserve its inode when updating the file, validate, then reload Caddy. Replacing the file by rename can leave the container reading the old inode. Only `8443/tcp` was added to firewalld (runtime and permanent); existing ports/forwarding were retained.
+
+## Watchdog
+
+Existing job `235d5a42aa94` remains on its 20-minute schedule. It was paused during migration, then resumed after the deployed probe returned `source=http`, `service=up`, `attention=0`, `stale=0`.
+
+- Host wrapper: `~/.hermes/scripts/linuxdo_ai_monitor.py`, copied from `scripts/host_monitor_wrapper.py` and read back byte-for-byte.
+- Canonical deployment record: `deploy/active-target.json`.
+- Mission/authority source: `deploy/watchdog-prompt.txt`.
+
+A configured remote URL is authoritative: probe failure must not fall back to a healthy-looking local snapshot. Invalid target configuration fails visibly. The watchdog diagnoses and proposes changes; automated research tuning is not enabled without approved bounds and an authenticated revisioned endpoint.
+
+## Verification evidence
+
+- Final Python suite: **208 tests passed** both locally (Python 3.11.15) and in a fresh isolated tcstw tree (Python 3.12.13), including 9 added tests for the final method/auth fix. Remote tests used ephemeral servers and temporary stores, not production state.
+- `node --check public/app.js` and `git diff --check`: passed.
+- Fixture/stub browser suite: **47/47 checks passed**. It uses ephemeral local servers, not the production backend.
+- Real Pages site: index, JS, CSS and runtime config returned 200 and matched the built SHA256 values.
+- Real desktop page rendered 645 topics at the check; real 390×844 touch emulation opened the preview and exposed its original linux.do link. Captured browser traffic contained no write requests and no network failures.
+- Real HTTPS API returned health/state 200, expected Pages ACAO, preflight 204; unauthenticated feedback 401 and disallowed-origin preflight 403.
+- The restarted, fixed backend completed a real cycle: fetched 60, 2 new, judged 2, picked 1. The two existing feedback journal records were unchanged by deployment.
+- Credential-bearing HTTP requests cannot put secrets in curl argv and refuse **all redirects**, including HTTPS downgrade. Public scraping retains its previous transport behavior.
+- Final source review found that POST could reach the GET-only owner failure-log handler without auth. Isolated regression tests reproduced the disclosure, then confirmed POST is rejected with 405 before reading the feed, with declared bodies forcing connection close. GET/HEAD still require owner auth. Final evidence: `/tmp/linuxdo-final-security-evidence/`; the retained production access log had no matching POST requests at the inspection (not proof of complete historical absence).
+- The final fix passed an independent review (44 focused tests), then was deployed during the scheduler's idle window. The restarted unit was active/enabled with `NRestarts=0`; deployed `server.py` SHA256 matched `6fecd95eb6506dc52fb3d9347dac5615575f4fb29008e0687e20deb55ea65b44`. Live GET/HEAD failure-log requests without auth returned 401. The boot cycle completed: fetched 60, 4 new, judged 4, picked 2; queue and explicit feedback were preserved. No production POST was used for this check.
+
+Local evidence: `/tmp/pages-batch-evidence/`, `/tmp/linuxdo-live-browser-zdz3ju_u/`. Deployed logs: `/home/young/services/linuxdo-ai/logs/server.log` and the user service journal. Temporary evidence directories are not a permanent archive.
+
+## Publishing another static release
+
+Build into a fresh directory outside the repository, for example:
+
+`python3 scripts/build_pages.py --api-base https://tcstw.youngzyl.me:8443/linuxdo-api --out /tmp/linuxdo-pages-next`
+
+The only publishable entries are `index.html`, `app.js`, `styles.css`, `runtime-config.js`, `.nojekyll`. A reused output directory with extra files, directories or symlinks is rejected before writing. Never publish the repository root, fixtures, production state, logs or credentials.
+
+Copy the verified five files into a checkout of `gh-pages` and make a normal commit/push (no force push). When initially changing Pages source, an explicit Pages build request was necessary; settings alone did not build the new branch. Verify the latest build commit and actual public asset hashes, then check the live API through the page's Origin.
+
+## Research continuation: actual state, not a launch claim
+
+The foundation repairs, permanent deployment and user-space Rust build prerequisite are complete. Production research scheduling, Imagine/Grok execution, safety review integration, sandbox execution, and adaptive tuning are **not enabled**.
+
+The isolated Rust spike is at `/home/young/build/linuxdo-spike`, using Rust/Cargo 1.98.1, Tokio and bundled rusqlite. A release binary was built with one build job; a SQLite WAL row survived a fresh process. This is a build/storage experiment, not the production scheduler or evidence of container isolation. Podman reports rootless cgroup v2 with CPU/memory/PID controllers; negative runtime isolation tests still have to run.
+
+The next live-provider gate is blocked: no independent CommandCode key was present in the project environment or deployment configuration. A separate empty provisioning file was created with mode `0600`:
+
+`/home/young/.config/linuxdo-ai/research.env`
+
+The intended variable name is `commandcode_apikey`. This file is deliberately **not loaded by the current feed**, so provisioning a research key cannot accidentally replace the working filter's credential while its base URL still points to DeepSeek. No Hermes credential pool or OAuth refresh file was copied. OAuth search/tool capability tests, role policy authoring, durable scheduler/outbox and sandbox gates remain required before advertising research as live.

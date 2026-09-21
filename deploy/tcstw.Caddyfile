@@ -1,0 +1,18 @@
+{
+	https_port 8443
+}
+
+:80 {
+	respond "OK" 200
+}
+
+tcstw.youngzyl.me {
+	@linuxdo path /linuxdo-api/*
+	handle @linuxdo {
+		uri strip_prefix /linuxdo-api
+		reverse_proxy 127.0.0.1:8791
+	}
+	handle {
+		respond "OK" 200
+	}
+}

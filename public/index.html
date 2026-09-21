@@ -22,6 +22,7 @@
     <div class="masthead__tools">
       <button class="btn" type="button" id="refresh">刷新</button>
       <button class="btn" type="button" id="density" aria-pressed="false">紧凑</button>
+      <button class="btn btn--ghost" type="button" id="owner" aria-describedby="authchip">管理</button>
     </div>
   </div>
   <p class="wrap standfirst">新帖按<em>原顺序</em>排在左栏，模型筛过的进中栏，你标待读的落右栏。空白格是有意留下的占位。</p>
@@ -36,6 +37,8 @@
     <p class="footnote" id="fetched">—</p>
     <p class="footnote">筛选模型 <span class="footnote__value" id="model">—</span></p>
     <p class="chip chip--dev" id="devbadge" hidden>DEV · fixture</p>
+    <p class="chip" id="authchip" hidden></p>
+    <p class="chip chip--warn" id="opstatus" role="status" aria-live="polite" hidden></p>
     <p class="chip chip--warn" id="warnchip" hidden>需要关注</p>
   </div>
 </header>
@@ -93,6 +96,7 @@
   </label>
 </aside>
 
+<script src="runtime-config.js" defer></script>
 <script src="app.js" defer></script>
 </body>
 </html>

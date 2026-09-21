@@ -1,0 +1,27 @@
+[Unit]
+Description=linuxdo AI feed API and collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/services/linuxdo-ai
+EnvironmentFile=%h/.config/linuxdo-ai/service.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 %h/services/linuxdo-ai/run.py serve
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=45
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/services/linuxdo-ai/data %h/services/linuxdo-ai/logs
+MemoryHigh=160M
+MemoryMax=256M
+TasksMax=32
+CPUQuota=50%
+
+[Install]
+WantedBy=default.target
