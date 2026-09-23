@@ -11,8 +11,9 @@ release evidence and research status. The research harness is **not live** yet.
 Every cycle the collector pulls the tag's topic list (`/tag/444-tag/444.json`) read-only,
 fetches the opening post of each new topic, and asks the configured filter model one question per
 batch: *is this actually worth reading?* The page then shows the result as three
-aligned columns — everything, the picks, and your reading queue — so the filtering
-itself is visible.
+aligned columns — everything (全部), the picks (精选), and your bookmarks (收藏) — so the filtering
+itself is visible. A bookmark is a separate signal from a filter preference: adding or removing one
+never votes, and a 纳入精选 / 排除 vote never edits the bookmark list.
 
 ```
 linux.do tag 444 ──► collector (list + OP body, paced, backoff)
@@ -56,7 +57,7 @@ Environment variables:
 | GET | `/` | the three-column page |
 | GET | `/api/state` | full payload: topics with `state` (`pending`/`picked`/`rejected`) + filter verdicts |
 | POST | `/api/refresh` | kick a cycle now (returns immediately) |
-| GET/POST | `/api/queue` | the right column (`{"queue":[id,...]}` / `{"add":id}` / `{"remove":id}`) |
+| GET/POST | `/api/queue` | 收藏 (bookmarks), the right column: `{"queue":[id,...]}` / `{"add":id}` / `{"remove":id}` |
 | GET/POST | `/api/feedback` | preference votes: `{"id":123,"vote":"keep"|"skip","note":"..."}` or `{"id":123,"vote":"clear"}`. Next filter cycle injects the most recent keep/skip examples into the prompt. |
 | GET | `/health` | status, counters, `attention.needed` |
 | GET | `/metrics` | Prometheus text |

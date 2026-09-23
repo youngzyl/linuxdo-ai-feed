@@ -25,7 +25,10 @@
     lsQueue: 'linuxdo-ai.queue',
     lsSeen: 'linuxdo-ai.seenPicked',
     lsDensity: 'linuxdo-ai.density',
+    lsRead: 'linuxdo-ai.read',
     ssOwner: 'linuxdo-ai.ownerToken',
+    readCap: 1000,        /* bounded browser-local read set (oldest ids are dropped) */
+    readDeadlineMs: 12000,/* one bounded deadline per /api/state read */
     hoverMs: 250,
     closeMs: 180,
     animMs: 300,     /* FLIP duration (brief: 280-340ms) */
@@ -53,10 +56,19 @@
   const RUNTIME = (typeof window !== 'undefined' && window.LINUXDO_AI_RUNTIME) || {};
   const API_BASE = apiBaseFrom(RUNTIME.apiBase);
   const api = (path) => API_BASE + path;
-  /* the browser test reads these two; no token is ever exposed */
-  window.LINUXDO_AI_DEBUG = { apiBase: API_BASE, sameOrigin: API_BASE === '' };
 
   const params = new URLSearchParams(location.search);
+  /* dev-only knob for the browser harness: a shorter read deadline. Clamped, never
+     read from the DOM/localStorage, and it only shortens the client's own timeout. */
+  const READ_DEADLINE = (function () {
+    const asked = Number(params.get('readtimeout'));
+    if (!Number.isFinite(asked) || asked <= 0) return CFG.readDeadlineMs;
+    return Math.min(Math.max(asked, 400), 60000);
+  })();
+
+  /* the browser test reads these; no token is ever exposed */
+  window.LINUXDO_AI_DEBUG = { apiBase: API_BASE, sameOrigin: API_BASE === '', readDeadlineMs: READ_DEADLINE };
+
   const DEV = params.get('fixture') === '1';
   const DEV_HEALTH = params.get('health');
   const DEV_SLOW = Number(params.get('slow')) || 0; /* dev: hold the fetch to show skeletons */
@@ -83,6 +95,8 @@
     emptyC3: $('#empty-c3'),
     errorstate: $('#errorstate'),
     errordetail: $('#errordetail'),
+    errortech: $('#errortech'),
+    errorfacts: $('#errorfacts'),
     retry: $('#retry'),
     refresh: $('#refresh'),
     density: $('#density'),
@@ -101,6 +115,7 @@
     dQueue: $('#d-queue'),
     dKeep: $('#d-keep'),
     dSkip: $('#d-skip'),
+    dRead: $('#d-read'),
     dNote: $('#d-note'),
     dTaste: $('#d-taste'),
     dLink: $('#d-link'),
@@ -116,11 +131,13 @@
     seen: new Set(),
     queue: new Set(),
     votes: new Map(), /* id -> 'keep' | 'skip' */
+    read: new Set(),  /* ids read in this browser (localStorage, namespaced by apiBase) */
     density: 'gap',
     tab: 'all',
     occupied: new Set(), /* 'row:col' slots filled by the previous render */
     flipLog: [],         /* dev-only: batch summary of each FLIP run */
     openId: null,
+    lastOkAt: null,   /* client ISO time of the last successful state read */
     pinned: false,
     first: true,
     lastTrigger: null
@@ -170,50 +187,104 @@
     return String(m).split('/').pop();
   }
 
-  function readIds(key) {
+  function readIds(key, cap) {
     try {
       const raw = localStorage.getItem(key);
       if (!raw) return new Set();
       const arr = JSON.parse(raw);
-      return new Set((Array.isArray(arr) ? arr : [])
+      let nums = (Array.isArray(arr) ? arr : [])
         .map((n) => Number(n))
-        .filter((n) => Number.isFinite(n)));
+        .filter((n) => Number.isFinite(n));
+      if (cap && nums.length > cap) {
+        nums = nums.slice(nums.length - cap);  /* keep the most recent entries */
+        writeIds(key, new Set(nums), cap);
+      }
+      const seen = [];
+      nums.forEach((n) => { if (seen.indexOf(n) < 0) seen.push(n); });
+      return new Set(seen);
     } catch (err) {
+      /* malformed JSON or storage blocked — start from empty, never throw */
       return new Set();
     }
   }
 
-  function writeIds(key, set) {
+  function writeIds(key, set, cap) {
     try {
-      localStorage.setItem(key, JSON.stringify(Array.from(set)));
+      let nums = Array.from(set).map((n) => Number(n)).filter((n) => Number.isFinite(n));
+      if (cap && nums.length > cap) nums = nums.slice(nums.length - cap);
+      localStorage.setItem(key, JSON.stringify(nums));
     } catch (err) {
       /* storage disabled — in-memory only */
     }
   }
 
-  const sleep = (ms) => new Promise((r) => window.setTimeout(r, ms));
-
-  function showError(detail) {
-    el.errordetail.textContent = detail;
-    el.errorstate.hidden = false;
-    if (!S.data) { /* nothing rendered yet — the error replaces the board */
-      el.board.hidden = true;
-      el.board.removeAttribute('aria-busy');
-      el.empties.hidden = true;
-    }
+  /* --------------------------------------------------------------- read state */
+  /* Read state is browser-local on purpose: it is not owner-authenticated, needs no
+     server write, survives a reload, and two deployments must not share a reading
+     position - hence the namespace, derived from the trusted apiBase (or the page
+     origin in a same-origin build). It is the one deliberately small-scope choice in
+     this contract: another device does not see it. */
+  function readKey() {
+    return CFG.lsRead + ':' + (API_BASE || location.origin);
   }
 
+  function loadRead() {
+    return readIds(readKey(), CFG.readCap);
+  }
+
+  function markRead(id, value) {
+    const n = Number(id);
+    if (!Number.isFinite(n)) return;
+    const want = (value === undefined) ? !S.read.has(n) : !!value;
+    if (want === S.read.has(n)) { syncReadNodes(n); return; }
+    if (want) S.read.add(n);
+    else S.read.delete(n);
+    writeIds(readKey(), S.read, CFG.readCap);
+    syncReadNodes(n);
+    /* keep the drawer's icon control in step; this never re-marks the topic */
+    if (S.openId !== null && Number(S.openId) === n) syncReadControl(S.topics.get(n));
+  }
+
+  /* the icon-only control: pressed state + accessible name only (no visible text) */
+  function syncReadControl(t) {
+    if (!el.dRead || !t) return;
+    const read = S.read.has(t.id);
+    el.dRead.setAttribute('aria-pressed', read ? 'true' : 'false');
+    el.dRead.setAttribute('aria-label', read ? '标记为未读' : '标记为已读');
+    el.dRead.title = read ? '标记为未读' : '标记为已读';
+  }
+
+  /* every instance of a topic (a topic can hold a 精选 and a 收藏 slot at once) */
+  function syncReadNodes(only) {
+    el.board.querySelectorAll('.item').forEach((node) => {
+      const id = Number(node.dataset.id);
+      if (only !== undefined && only !== null && id !== Number(only)) return;
+      const read = S.read.has(id);
+      node.classList.toggle('is-read', read);
+      node.setAttribute('aria-label', itemLabel(S.topics.get(id), read));
+    });
+  }
+
+  const sleep = (ms) => new Promise((r) => window.setTimeout(r, ms));
+
+  /* the error panel is filled by showError() next to the read-error helpers */
   function clearError() {
     el.errorstate.hidden = true;
     el.errordetail.textContent = '';
+    if (el.errorfacts) el.errorfacts.textContent = '';
+    if (el.errortech) {
+      el.errortech.hidden = true;
+      el.errortech.open = false;
+    }
   }
 
-  /* per-column empty explanations; on mobile only the visible list gets one */
+  /* per-column empty explanations; on mobile only the visible list gets one.
+     Membership: 1 全部 = every topic that is not 精选, 2 精选 = picked, 3 收藏 = bookmarked. */
   function updateEmpties() {
     const topics = S.data ? S.data.topics : [];
     const picked = topics.filter((t) => t.state === 'picked').length;
-    let queued = 0;
-    S.queue.forEach((id) => { if (S.topics.has(id)) queued += 1; });
+    let bookmarked = 0;
+    S.queue.forEach((id) => { if (S.topics.has(id)) bookmarked += 1; });
     const show = { c1: false, c2: false, c3: false };
 
     if (!S.data || el.board.hidden) {
@@ -222,17 +293,17 @@
     }
     if (isDesktop()) {
       show.c1 = topics.length - picked === 0;
-      show.c2 = picked - queued === 0;
-      show.c3 = queued === 0;
+      show.c2 = picked === 0;
+      show.c3 = bookmarked === 0;
     } else if (S.tab === 'all') {
       show.c1 = topics.length === 0;
     } else if (S.tab === 'picked') {
       show.c2 = picked === 0;
     } else {
-      show.c3 = queued === 0;
+      show.c3 = bookmarked === 0;
     }
 
-    el.emptyC2.textContent = picked > 0 ? '通过筛选的帖子都已在待读。' : '中栏还没有通过筛选的帖子。';
+    el.emptyC1.textContent = topics.length ? '所有帖子都已进入精选。' : '还没有抓到帖子。';
     el.emptyC1.hidden = !show.c1;
     el.emptyC2.hidden = !show.c2;
     el.emptyC3.hidden = !show.c3;
@@ -248,12 +319,97 @@
     return file + (bust || '?t=' + Date.now());
   }
 
+  /* One bounded read per pull: a single deadline so a hung connection cannot leave the
+     board loading forever, and a classified error so the notice tells the truth about
+     what happened (HTTP status vs deadline vs connection) instead of guessing why. */
   async function fetchState(opts) {
     if (DEV_FAIL) throw new Error('dev：?fail=1 模拟 /api/state 失败');
     if (DEV_SLOW) await sleep(DEV_SLOW);
-    const res = await fetch(stateUrl(opts), { cache: 'no-store' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    return res.json();
+    const controller = (typeof AbortController === 'function') ? new AbortController() : null;
+    const timer = window.setTimeout(() => { if (controller) controller.abort(); }, READ_DEADLINE);
+    try {
+      const res = await fetch(stateUrl(opts), {
+        cache: 'no-store',
+        signal: controller ? controller.signal : undefined
+      });
+      if (!res.ok) {
+        const err = new Error('HTTP ' + res.status);
+        err.kind = 'http';
+        err.status = res.status;
+        throw err;
+      }
+      try {
+        return await res.json();
+      } catch (err) {
+        const bad = new Error('payload');
+        bad.kind = 'payload';
+        throw bad;
+      }
+    } catch (err) {
+      if (err && err.kind) throw err;
+      if (controller && controller.signal.aborted) {
+        const t = new Error('timeout');
+        t.kind = 'timeout';
+        throw t;
+      }
+      const net = new Error((err && err.message) ? err.message : '网络错误');
+      net.kind = 'network';
+      throw net;
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
+
+  /* the four categories a reader can act on: deadline, server status, connection, payload */
+  function readErrorCategory(err) {
+    const kind = (err && err.kind) || 'network';
+    if (kind === 'timeout') return 'timeout';
+    if (kind === 'http') return 'http ' + ((err.status != null) ? err.status : '?');
+    if (kind === 'payload') return 'payload';
+    return 'network';
+  }
+
+  function describeReadError(err) {
+    const kind = err && err.kind;
+    if (kind === 'timeout') return '读取超时（服务器 ' + Math.round(READ_DEADLINE / 1000) + ' 秒内没有响应）';
+    if (kind === 'http') return '服务器返回 HTTP ' + err.status;
+    if (kind === 'payload') return '服务器返回的内容不是 JSON';
+    return '连不上服务器（' + ((err && err.message) ? err.message : '网络错误') + '）';
+  }
+
+  function nowIso() {
+    try {
+      return new Date().toISOString();
+    } catch (err) {
+      return '';
+    }
+  }
+
+  /* Collapsed technical facts, built only from safe values: the category, the fixed
+     trusted endpoint path (CFG.state - never a URL with a query or credentials), the
+     client-side failure time and the last successful read time. No headers, no tokens,
+     no private bodies, and nothing is sent anywhere (no telemetry endpoint). */
+  function renderErrorFacts(err) {
+    if (!el.errorfacts || !el.errortech) return;
+    el.errorfacts.textContent = [
+      '分类 ' + readErrorCategory(err),
+      '端点 ' + CFG.state,
+      '客户端时间 ' + (nowIso() || '—'),
+      '上次成功读取 ' + (S.lastOkAt || '—')
+    ].join('\n');
+    el.errortech.hidden = false;
+    el.errortech.open = false;     /* collapsed: no extra visible clutter */
+  }
+
+  function showError(detail, err) {
+    el.errordetail.textContent = detail;
+    renderErrorFacts(err);
+    el.errorstate.hidden = false;
+    if (!S.data) { /* nothing rendered yet — the error replaces the board */
+      el.board.hidden = true;
+      el.board.removeAttribute('aria-busy');
+      el.empties.hidden = true;
+    }
   }
 
   function validate(data) {
@@ -261,9 +417,23 @@
     return data;
   }
 
-  function colOf(t) {
-    if (t.state !== 'picked') return 1;
-    return S.queue.has(t.id) ? 3 : 2;
+  /* Column membership (settled contract): a topic's own membership - 1 全部 for anything
+     not 精选, 2 精选 for picked - never disappears because it is bookmarked, and 3 收藏
+     is independent of the valuable flag (a rejected topic can sit there). One row can
+     therefore hold two filled cells for the same topic; that is intended, not a bug.
+     The intentional same-slot blank mode (the empty-slot marker) and the compact toggle
+     keep their old meaning: a cell is blank only when this list has no item for that row. */
+  function cellHas(t, col) {
+    if (col === 3) return S.queue.has(t.id);
+    if (col === 2) return t.state === 'picked';
+    return t.state !== 'picked';
+  }
+
+  function nodeCol(node) {
+    const cell = node && node.closest ? node.closest('.cell') : null;
+    if (!cell) return 0;
+    const m = /cell--c(\d)/.exec(cell.className);
+    return m ? Number(m[1]) : 0;
   }
 
   function pickedIds(data) {
@@ -284,9 +454,13 @@
     return bits.join(' · ');
   }
 
-  function itemLabel(t) {
-    const score = (t.filter && typeof t.filter.score === 'number') ? ('，模型评分 ' + t.filter.score) : '';
-    return '打开预览：' + t.title + '。' + metaText(t) + score;
+  function itemLabel(t, read) {
+    const topic = t || {};
+    const score = (topic.filter && typeof topic.filter.score === 'number') ? ('，模型评分 ' + topic.filter.score) : '';
+    const base = topic.title
+      ? '打开预览：' + topic.title + '。' + metaText(topic) + score
+      : '打开预览';
+    return base + (read ? '。已读' : '');
   }
 
   /* tags: at most two rendered, the rest folded into +N with the full list in
@@ -383,7 +557,11 @@
     node.dataset.id = String(t.id);
     node.tabIndex = 0;
     node.setAttribute('role', 'button');
-    node.setAttribute('aria-label', itemLabel(t));
+    const read = S.read.has(t.id);
+    node.setAttribute('aria-label', itemLabel(t, read));
+    /* read state is carried by the title weight/colour and a quiet unread dot only -
+       never by a per-row 已读 badge */
+    if (read) node.classList.add('is-read');
 
     const title = document.createElement('h3');
     title.className = 'item__title';
@@ -429,7 +607,7 @@
     /* Auto-placement in a 3-column grid keeps row i aligned; do not set
        inline gridColumn — those leak into the mobile 1-col template as
        implicit extra columns and overflow the viewport. */
-    if (topic && colOf(topic) === col) {
+    if (topic && cellHas(topic, col)) {
       cell.appendChild(buildItem(topic));
     } else {
       cell.classList.add('cell--empty');
@@ -546,7 +724,9 @@
        row (opacity only) instead of popping */
     const prevOccupied = S.occupied || new Set();
     const occupied = new Set();
-    S.rows.forEach((r) => occupied.add(r.row + ':' + colOf(r.t)));
+    S.rows.forEach((r) => {
+      [1, 2, 3].forEach((c) => { if (cellHas(r.t, c)) occupied.add(r.row + ':' + c); });
+    });
     const appearing = new Set();
     prevOccupied.forEach((key) => { if (!occupied.has(key)) appearing.add(key); });
     S.occupied = occupied;
@@ -556,7 +736,7 @@
       for (let col = 1; col <= 3; col++) {
         const stack = document.createElement('div');
         stack.className = 'col col--c' + col;
-        S.rows.forEach((r) => { if (colOf(r.t) === col) stack.appendChild(wrapItem(r.t, col)); });
+        S.rows.forEach((r) => { if (cellHas(r.t, col)) stack.appendChild(wrapItem(r.t, col)); });
         frag.appendChild(stack);
       }
     } else {
@@ -622,14 +802,14 @@
   function updateCounts() {
     const topics = S.data ? S.data.topics : [];
     const picked = topics.filter((t) => t.state === 'picked').length;
-    let queued = 0;
-    S.queue.forEach((id) => { if (S.topics.has(id)) queued += 1; });
+    let bookmarked = 0;
+    S.queue.forEach((id) => { if (S.topics.has(id)) bookmarked += 1; });
     el.cAll.textContent = String(topics.length);
     el.cTotal.textContent = String(topics.length);
     el.cPicked.textContent = String(picked);
-    el.cQueue.textContent = String(queued);
+    el.cQueue.textContent = String(bookmarked);
     el.countline.setAttribute('aria-label',
-      '全部 ' + topics.length + ' 条，通过 ' + picked + ' 条，待读 ' + queued + ' 条');
+      '全部 ' + topics.length + ' 条，精选 ' + picked + ' 条，收藏 ' + bookmarked + ' 条');
   }
 
   function updateHeader() {
@@ -677,27 +857,38 @@
     if (S.openId && !S.topics.has(S.openId)) closeDrawer(false);
   }
 
-  async function pull(opts) {
+  /* deduplicated: a refresh, a retry and the 30s tick that overlap share one read */
+  let pullPromise = null;
+
+  function pull(opts) {
+    if (pullPromise) return pullPromise;
+    pullPromise = doPull(opts).then((ok) => ok, () => false).finally(() => { pullPromise = null; });
+    return pullPromise;
+  }
+
+  async function doPull(opts) {
     const prevRects = S.data ? captureRects() : null;
     let data;
     try {
       data = validate(await fetchState(opts));
     } catch (err) {
+      /* an existing successful snapshot stays rendered, with a stale/error notice */
       const hint = DEV
         ? '无法读取 ' + stateUrl({ next: opts && opts.next }) +
           '（file:// 下浏览器会拦截 fetch，请用本地 http 服务打开；细节见 CONTRACT §6）'
-        : '无法读取 /api/state（' + err.message + '）。后台可能正在重启，稍后重试。';
-      showError(hint);
+        : describeReadError(err) + '。' + (S.data ? '仍显示上一次成功的数据。' : '') + '点「重试」再读一次。';
+      showError(hint, err);
       return false;
     }
     clearError();
     applyState(data, prevRects);
+    S.lastOkAt = nowIso();     /* feeds the collapsed facts of a later failure */
     return true;
   }
 
   /* ---------------------------------------------------------------- drawer  */
 
-  const STATE_LABEL = { picked: '已通过', rejected: '已筛掉', pending: '待筛选' };
+  const STATE_LABEL = { picked: '精选', rejected: '未入选', pending: '待筛选' };
 
   function fillDrawer(t) {
     if (!t) return;
@@ -745,28 +936,31 @@
     el.dLink.href = t.url;
     el.dLink.setAttribute('aria-label', '在新标签打开原文：' + t.title);
 
-    if (t.state === 'picked') {
-      el.dQueue.hidden = false;
-      const queued = S.queue.has(t.id);
-      el.dQueue.textContent = queued ? '从待读移出' : '移到待读';
-      el.dQueue.setAttribute('aria-pressed', queued ? 'true' : 'false');
-    } else {
-      el.dQueue.hidden = true;
-    }
+    /* 收藏 is available for every topic - a rejected one can be bookmarked too */
+    el.dQueue.hidden = false;
+    const queued = S.queue.has(t.id);
+    el.dQueue.textContent = queued ? '取消收藏' : '收藏';
+    el.dQueue.setAttribute('aria-pressed', queued ? 'true' : 'false');
+
     const vote = S.votes.get(t.id);
     el.dKeep.setAttribute('aria-pressed', vote === 'keep' ? 'true' : 'false');
     el.dSkip.setAttribute('aria-pressed', vote === 'skip' ? 'true' : 'false');
-    el.dKeep.textContent = vote === 'keep' ? '已标记想看' : (t.state === 'rejected' ? '漏掉了 · 教筛选器' : '想看 · 教筛选器');
-    el.dSkip.textContent = vote === 'skip' ? '已标记不感兴趣' : '不感兴趣';
+    /* fixed labels: the active preference is the pressed state plus the one-line note */
+    el.dKeep.textContent = '纳入精选';
+    el.dSkip.textContent = '排除';
     if (vote === 'keep') {
       el.dTaste.hidden = false;
-      el.dTaste.textContent = '已记为想看。下一轮筛选会拿这条当正例。';
+      el.dTaste.textContent = '已纳入精选';
     } else if (vote === 'skip') {
       el.dTaste.hidden = false;
-      el.dTaste.textContent = '已记为不感兴趣。下一轮筛选会拿这条当反例。';
+      el.dTaste.textContent = '已排除';
     } else {
       el.dTaste.hidden = true;
     }
+
+    /* the read control reflects (never changes) the browser-local state: opening the
+       drawer again or the 30s time refresh must not undo a manual 未读 toggle */
+    syncReadControl(t);
     if (el.dNote && document.activeElement !== el.dNote) el.dNote.value = '';
   }
 
@@ -775,28 +969,51 @@
     el.scrim.hidden = !(!el.drawer.hidden && !isDesktop());
   }
 
+  /* a topic can hold two slots at once (精选 + 收藏): every instance follows the drawer */
+  function itemNodes(id) {
+    return Array.from(el.board.querySelectorAll('.item[data-id="' + id + '"]'));
+  }
+
+  function unmarkCurrent(id) {
+    itemNodes(id).forEach((n) => {
+      n.classList.remove('is-current');
+      n.removeAttribute('aria-expanded');
+    });
+  }
+
+  /* The settled read trigger. An explicit open - click, tap, keyboard activation or the
+     ?open= dev deep link - marks the topic read once the preview really shows content.
+     A hover/focus preview is only a prefetch and never marks anything, and a preview
+     with no body at all waits for the original link. Re-opening the topic the drawer
+     already shows does NOT mark again: that would undo a manual 未读 toggle. Only moving
+     to another topic (an explicit navigation change) marks again. */
+  function drawerHasContent(t) {
+    return !!String((t && t.body_text) || '').trim() || !!String((t && t.excerpt) || '').trim();
+  }
+
+  function markReadOnOpen(t, opts) {
+    if (!opts || !opts.explicit) return;
+    if (!drawerHasContent(t)) return;
+    markRead(t.id, true);
+  }
+
   function openDrawer(id, opts) {
     const t = S.topics.get(id);
     if (!t) return;
     const wasOpen = S.openId;
-    if (wasOpen && wasOpen !== id) {
-      const prev = el.board.querySelector('.item[data-id="' + wasOpen + '"]');
-      if (prev) {
-        prev.classList.remove('is-current');
-        prev.removeAttribute('aria-expanded');
-      }
-    }
+    const wasCommitted = wasOpen === id && S.pinned;  /* same topic, already explicitly open */
+    if (wasOpen && wasOpen !== id) unmarkCurrent(wasOpen);
     S.openId = id;
     S.pinned = !!(opts && opts.pinned);
     if (opts && opts.trigger) S.lastTrigger = opts.trigger;
 
     fillDrawer(t);
+    if (!wasCommitted) markReadOnOpen(t, opts);
 
-    const node = el.board.querySelector('.item[data-id="' + id + '"]');
-    if (node) {
+    itemNodes(id).forEach((node) => {
       node.classList.add('is-current');
       node.setAttribute('aria-expanded', 'true');
-    }
+    });
 
     window.clearTimeout(hideTimer);
     if (!el.drawer.hidden) {
@@ -816,11 +1033,7 @@
   function closeDrawer(restoreFocus) {
     if (el.drawer.hidden) return;
     const id = S.openId;
-    const node = id ? el.board.querySelector('.item[data-id="' + id + '"]') : null;
-    if (node) {
-      node.classList.remove('is-current');
-      node.removeAttribute('aria-expanded');
-    }
+    if (id) unmarkCurrent(id);
     S.openId = null;
     S.pinned = false;
     el.drawer.classList.remove('is-open');
@@ -885,31 +1098,35 @@
 
   const WRITE_CONTROLS = () => [
     [el.refresh, '刷新'],
-    [el.dQueue, '改待读'],
-    [el.dKeep, '投票'],
-    [el.dSkip, '投票']
+    [el.dQueue, '收藏'],
+    [el.dKeep, '筛选'],
+    [el.dSkip, '筛选']
   ];
 
   function refreshAuthUi() {
     OWNER = !!ownerToken();
     const writable = canWrite();
     if (el.authchip) {
+      /* the small indicator carries the auth state - the 管理 button never changes label */
       el.authchip.hidden = false;
       el.authchip.textContent = DEV ? 'DEV · 只读' : (OWNER ? '已连接 · 可写' : '只读');
       el.authchip.title = OWNER
         ? 'owner token 保存在本标签页的 sessionStorage，关掉标签页即失效'
-        : '只读：写入（待读/投票/刷新）已禁用。点右上「管理」粘贴 owner token 后开启。';
+        : '只读：写入（收藏/筛选/刷新）已禁用。点「管理」粘贴 owner token 后开启。';
       el.authchip.classList.toggle('chip--ok', OWNER && !DEV);
     }
     if (el.owner) {
-      el.owner.textContent = OWNER ? '管理 · 已连接' : '管理';
-      el.owner.title = OWNER ? '点这里可清除 token（回到只读）' : '点这里粘贴 owner token（只保存在本标签页）';
+      el.owner.textContent = '管理';
+      el.owner.dataset.owner = OWNER ? 'on' : 'off';
+      el.owner.title = OWNER
+        ? '已连接（token 只在本标签页）；点这里可更换或清除'
+        : '未连接 · 点这里粘贴 owner token（只保存在本标签页）';
     }
     WRITE_CONTROLS().forEach((pair) => {
       const btn = pair[0];
       if (!btn) return;
       btn.disabled = !writable;
-      btn.title = writable ? '' : '只读模式：' + pair[1] + '需要 owner token，点右上「管理」填入';
+      btn.title = writable ? '' : '只读模式：' + pair[1] + '需要 owner token，点「管理」填入';
     });
   }
 
@@ -927,7 +1144,7 @@
   async function mutate(path, body, btn) {
     if (DEV) return { ok: true, dev: true, data: {} };   /* fixture mode: local only */
     if (!OWNER) {
-      setOpStatus('只读模式：点右上「管理」填入 owner token 才能写入', false);
+      setOpStatus('只读模式：点「管理」填入 owner token 才能写入', false);
       return { ok: false, reason: 'read-only' };
     }
     if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', '1'); }
@@ -972,7 +1189,7 @@
 
   async function toggleQueue(id) {
     const t = S.topics.get(id);
-    if (!t || t.state !== 'picked') return;
+    if (!t) return;
     if (DEV) {          /* fixture mode: a local interaction, no backend behind it */
       const prevRects = captureRects();
       if (S.queue.has(id)) S.queue.delete(id);
@@ -984,7 +1201,7 @@
       return;
     }
     if (!OWNER) {
-      setOpStatus('只读模式：改待读需要 owner token，点右上「管理」填入', false);
+      setOpStatus('只读模式：收藏需要 owner token，点「管理」填入', false);
       return;
     }
     const add = !S.queue.has(id);
@@ -1002,25 +1219,23 @@
       if (vote === 'keep') {
         t.state = 'picked';
         t.rescued = true;
-        if (!S.queue.has(id)) S.queue.add(id);
-      } else if (vote === 'skip') {
+      } else {
         t.state = 'rejected';
         t.skipped = true;
-        if (S.queue.has(id)) S.queue.delete(id);
       }
-      writeIds(CFG.lsQueue, S.queue);
+      /* the vote moves 全部 <-> 精选 only; 收藏 is a separate signal and is untouched */
       render(prevRects, null);
       updateCounts();
-      fillDrawer(t);
+      redrawOpen();
       return;
     }
     if (!OWNER) {
-      setOpStatus('只读模式：投票需要 owner token，点右上「管理」填入', false);
+      setOpStatus('只读模式：筛选需要 owner token，点「管理」填入', false);
       return;
     }
     const note = (el.dNote && el.dNote.value || '').trim();
     const btn = vote === 'keep' ? el.dKeep : el.dSkip;
-    /* one request: the server moves the topic, updates the queue and saves before answering */
+    /* one request: the server stores the override and saves before answering */
     const res = await mutate(CFG.feedback, { id: id, vote: vote, note: note }, btn);
     if (!res.ok) return;               /* nothing changes locally on failure */
     const payload = res.data || {};
@@ -1030,7 +1245,17 @@
       if (payload.topic.skipped) t.skipped = true;
     }
     S.votes.set(id, vote);
-    applyQueueSnapshot(payload);
+    /* the vote moves the topic between 全部 and 精选 only. The response's queue is
+       deliberately not applied: a vote can never add or remove a 收藏. */
+    render(captureRects(), null);
+    updateCounts();
+    redrawOpen();
+  }
+
+  function redrawOpen() {
+    if (!S.openId) return;
+    const cur = S.topics.get(S.openId);
+    if (cur) fillDrawer(cur);
   }
 
   /* ---------------------------------------------------------------- events */
@@ -1080,8 +1305,8 @@
     if (!node) return;
     const t = S.topics.get(Number(node.dataset.id));
     if (!t) return;
-    if (!isTouchGesture() && colOf(t) === 2) toggleQueue(t.id);
-    else openDrawer(t.id, { pinned: true, trigger: node });
+    if (!isTouchGesture() && nodeCol(node) === 2) toggleQueue(t.id);
+    else openDrawer(t.id, { pinned: true, explicit: true, trigger: node });
   });
 
   el.board.addEventListener('keydown', (ev) => {
@@ -1091,8 +1316,8 @@
     ev.preventDefault();
     const t = S.topics.get(Number(node.dataset.id));
     if (!t) return;
-    if (colOf(t) === 2) toggleQueue(t.id);
-    else openDrawer(t.id, { pinned: true, trigger: node });
+    if (nodeCol(node) === 2) toggleQueue(t.id);
+    else openDrawer(t.id, { pinned: true, explicit: true, trigger: node });
   });
 
   document.addEventListener('keydown', (ev) => {
@@ -1117,6 +1342,12 @@
   if (el.dKeep) el.dKeep.addEventListener('click', () => { if (S.openId) applyVote(S.openId, 'keep'); });
   if (el.dSkip) el.dSkip.addEventListener('click', () => { if (S.openId) applyVote(S.openId, 'skip'); });
 
+  /* icon-only, reversible, browser-local (never a server write) */
+  if (el.dRead) el.dRead.addEventListener('click', () => { if (S.openId) markRead(S.openId); });
+
+  /* opening the original link counts as reading even when no body was fetched */
+  el.dLink.addEventListener('click', () => { if (S.openId) markRead(S.openId, true); });
+
   el.density.addEventListener('click', () => {
     const prevRects = captureRects();
     S.density = S.density === 'compact' ? 'gap' : 'compact';
@@ -1137,7 +1368,7 @@
         if (!ok) await pull({});
       } else {
         if (!OWNER) {
-          setOpStatus('只读模式：刷新会触发服务端抓取，需要 owner token（点右上「管理」）', false);
+          setOpStatus('只读模式：刷新会触发服务端抓取，需要 owner token（点「管理」）', false);
           return;
         }
         /* explicit acknowledgement: a refused refresh stays visible instead of looking fine */
@@ -1159,8 +1390,7 @@
       return;
     }
     const entered = window.prompt(
-      OWNER ? '已连接。粘贴新的 owner token，留空则清除（只保存在本标签页）'
-            : '粘贴 owner token（只保存在本标签页 sessionStorage，关掉标签页即失效）',
+      OWNER ? 'owner token（留空清除，只保存在本标签页）' : 'owner token（只保存在本标签页）',
       ''
     );
     if (entered === null) return;               /* cancelled: keep whatever was there */
@@ -1173,7 +1403,7 @@
     /* verify against the server instead of claiming it works */
     try {
       const res = await fetch(api(CFG.feedback), { cache: 'no-store', headers: authHeaders() });
-      if (res.ok) setOpStatus('已连接：可以改待读 / 投票 / 刷新', true);
+      if (res.ok) setOpStatus('已连接：可以收藏 / 筛选 / 刷新', true);
       else setOpStatus(opErrorText(res.status, null) + '（token 已保留，可改后再试）', false);
     } catch (err) {
       setOpStatus('token 已保存，但校验请求失败：' + ((err && err.message) ? err.message : '网络错误'), false);
@@ -1296,7 +1526,7 @@
       if (S.data) { render(captureRects(), null); updateCounts(); }
     } catch (err) {
       S.queue = readIds(CFG.lsQueue);   /* offline: last known copy, clearly provisional */
-      setOpStatus('待读列表来自本地缓存（没连上后端）', false);
+      setOpStatus('收藏列表来自本地缓存（没连上后端）', false);
     }
   }
 
@@ -1352,6 +1582,7 @@
     initFromUrl();
     refreshAuthUi();
     S.seen = readIds(CFG.lsSeen);
+    S.read = loadRead();
     renderSkeleton();
     S.occupied = new Set();
     await loadQueue();
@@ -1368,7 +1599,9 @@
     if (!OPEN_ID) return;
     const node = el.board.querySelector('.item[data-id="' + OPEN_ID + '"]');
     if (!node) return;
-    openDrawer(OPEN_ID, { pinned: true, trigger: node });
+    /* an explicit open: the deep link is a navigation, so it marks read when the
+       preview really carries content */
+    openDrawer(OPEN_ID, { pinned: true, explicit: true, trigger: node });
   }
 
   /* ?auto=<n> — dev helper: press 刷新 n times so refresh-driven animation
@@ -1384,6 +1617,13 @@
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) window.clearInterval(tickTimer);
     else { refreshTimes(); tickTimer = window.setInterval(refreshTimes, 30000); }
+  });
+
+  /* another tab of the same deployment marked something read: mirror the change */
+  window.addEventListener('storage', (ev) => {
+    if (!ev || ev.key !== readKey()) return;
+    S.read = loadRead();
+    syncReadNodes();
   });
 
   init();

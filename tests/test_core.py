@@ -453,9 +453,11 @@ class TestLearn(TempStore):
         self.assertEqual(entry["vote"], "keep")
         self.assertEqual(self.store.get(1)["state"], "picked")
         self.assertTrue(self.store.get(1).get("rescued"))
+        self.assertEqual(self.store.queue(), [], "a vote never creates a bookmark")
         self.assertEqual(learn_mod.counts(self.store), {"keep": 1, "skip": 0, "total": 1})
 
-    def test_skip_drops_a_pick_and_removes_it_from_queue(self):
+    def test_skip_drops_a_pick_and_keeps_its_bookmark(self):
+        """Authorized reader contract: 收藏 and 排除 are independent signals."""
         import learn as learn_mod
 
         self.store.upsert_topics([{"id": 2, "title": "promo", "created_at": "2026-09-20T00:00:00Z"}])
@@ -463,7 +465,7 @@ class TestLearn(TempStore):
         self.store.queue_add(2)
         learn_mod.record(self.store, 2, "skip", "又是中转站")
         self.assertEqual(self.store.get(2)["state"], "rejected")
-        self.assertEqual(self.store.queue(), [])
+        self.assertEqual(self.store.queue(), [2], "skip must not remove the bookmark")
         self.assertEqual(learn_mod.counts(self.store)["skip"], 1)
 
     def test_second_vote_replaces_the_first(self):

@@ -3,9 +3,14 @@
 The filter itself is a fixed prompt; this module is the learning loop around it.
 Three signals, all explicit (never inferred from a click or a hover):
 
-  keep     — you queued it / you rescued a rejected topic. Positive example.
-  skip     — you marked a pick as not interesting. Negative example.
+  keep     — you marked a topic 纳入精选 (or rescued a rejected one). Positive example.
+  skip     — you marked a pick 排除. Negative example.
   note     — optional one-line reason you typed (kept with the example).
+
+An explicit vote is ONLY the manual override (`store.set_manual_override`), which owns
+the display state. It is deliberately not tied to the third column: since the authorized
+reader contract that column is 收藏 (bookmarks), written by the reader UI through
+/api/queue, and a vote never adds or removes a bookmark.
 
 The next filter cycle injects the most recent keep/skip examples into the user
 prompt so the model can imitate *your* taste rather than the generic one. The
@@ -42,6 +47,26 @@ def _topic_snapshot(topic: dict | None) -> dict:
     }
 
 
+def _apply_explicit_effects(store, topic: dict, vote: str) -> None:
+    """The side effects of an explicit vote, deliberately kept in one place.
+
+    The vote *is* the manual override (`store.set_manual_override`), and that is the
+    whole effect: it is what owns the display state. 收藏 (bookmarks) are a separate,
+    user-owned signal written by the reader UI through /api/queue, so a vote never adds
+    or removes a bookmark (the coupling this function used to carry was removed with the
+    authorized reader contract).
+    """
+    tid = int(topic["id"])
+    was_picked = topic.get("state") == "picked"
+    store.set_manual_override(tid, vote)
+    if vote == "keep":
+        if not was_picked:
+            topic["rescued"] = True
+    else:
+        if was_picked:
+            topic["skipped"] = True
+
+
 def record(store, topic_id: int, vote: str, note: str = "") -> dict:
     """Record one vote. A later vote on the same topic replaces the earlier one."""
     vote = (vote or "").strip().lower()
@@ -58,29 +83,23 @@ def record(store, topic_id: int, vote: str, note: str = "") -> dict:
         **_topic_snapshot(topic),
     }
     with store.lock:
-        # keep/skip also move the topic between columns and update the reading queue, so the
-        # UI reflects the vote immediately without waiting for the next filter cycle. The
-        # queue change happens inside this same lock and is saved before the caller can
-        # answer, so the response and the durable state cannot disagree.
-        if vote == "keep":
-            if topic.get("state") != "picked":
-                topic["state"] = "picked"
-                topic["rescued"] = True
-            if int(topic_id) not in store.data["queue"]:
-                store.data["queue"].append(int(topic_id))
-        if vote == "skip":
-            if topic.get("state") == "picked":
-                topic["state"] = "rejected"
-                topic["skipped"] = True
-            store.data["queue"] = [x for x in store.data["queue"] if x != int(topic_id)]
+        # An explicit vote beats any later model verdict: it is stored as the topic's
+        # manual_override, and the display state is derived from it. The duel with the
+        # next filter run also happens inside this same lock and is saved before the
+        # caller can answer, so the response and the durable state cannot disagree.
+        # Bookmarks are not part of this: they are written through /api/queue only.
+        _apply_explicit_effects(store, topic, vote)
         store.add_feedback(entry)  # durable: state.json + append-only feedback.jsonl
         store.save()
     return entry
 
 
 def remove(store, topic_id: int) -> None:
-    store.clear_feedback(int(topic_id))
-    store.save()
+    """Clear the vote. The override goes with it, exposing the latest model verdict."""
+    with store.lock:
+        store.clear_feedback(int(topic_id))
+        store.clear_manual_override(int(topic_id))
+        store.save()
 
 
 def all_votes(store) -> list[dict]:

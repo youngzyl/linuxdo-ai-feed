@@ -6,6 +6,7 @@ The key is never logged and never included in any HTTP response.
 from __future__ import annotations
 
 import json
+import math
 import re
 import time
 
@@ -103,6 +104,7 @@ def extract_results(text: str) -> list[dict]:
 
 
 def _coerce_bool(value) -> bool:
+    """Legacy permissive coercion, used only by `normalize_verdict` (compatibility)."""
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)):
@@ -112,36 +114,202 @@ def _coerce_bool(value) -> bool:
     return False
 
 
-def normalize_verdict(row: dict, model: str, prompt_version: str) -> dict:
-    index = row.get("i", row.get("index", row.get("id")))
+# Documented policy (SYSTEM_PROMPT): score 0-100, >= 60 counts as valuable.
+SCORE_MIN = 0.0
+SCORE_MAX = 100.0
+VALUABLE_MIN_SCORE = 60
+VALUABLE_KEYS = ("valuable", "is_valuable", "keep", "picked", "value")
+TEXT_LIMITS = {"category": 24, "reason": 120, "summary": 220}
+
+
+def _parse_index(value, *, strict: bool):
+    """Indices are integers. A bool is an int in Python but is never an index."""
+    if isinstance(value, bool):
+        return None if strict else int(value)
+    if isinstance(value, int):
+        return value
+    if strict:
+        return None
     try:
-        index = int(index)
+        return int(value)
     except Exception:
-        index = None
-    valuable = None
-    for key in ("valuable", "is_valuable", "keep", "picked", "value"):
+        return None
+
+
+def _parse_score(value, *, strict: bool):
+    """A finite number inside the documented policy range, else None."""
+    if value is None:
+        return None
+    if strict:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        number = float(value)
+        if not math.isfinite(number) or number < SCORE_MIN or number > SCORE_MAX:
+            return None
+        return int(number) if number.is_integer() else number
+    try:
+        return int(float(value))
+    except Exception:
+        return None
+
+
+def _parse_valuable(row: dict, *, strict: bool):
+    """(value, source). source: 'bool' (a real bool), 'type' (present, wrong type), 'missing'."""
+    for key in VALUABLE_KEYS:
         if key in row:
-            valuable = _coerce_bool(row[key])
-            break
-    score = row.get("score")
-    try:
-        score = int(float(score))
-    except Exception:
-        score = None
-    if valuable is None and score is not None:
-        valuable = score >= 60
-    if valuable is None:
-        valuable = False
+            raw = row[key]
+            if isinstance(raw, bool):
+                return raw, "bool"
+            if strict:
+                return None, "type"
+            return _coerce_bool(raw), "bool"
+    return None, "missing"
+
+
+def _parse_text(row: dict, key: str, *, strict: bool, counters: dict | None = None) -> str:
+    """Trimmed, capped text. A container in a text field is dropped, never stringified."""
+    value = row.get(key)
+    limit = TEXT_LIMITS[key]
+    if value is None:
+        return ""
+    if strict and not isinstance(value, str):
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return str(value)[:limit]
+        if counters is not None:
+            counters["text_type_rejected"] = int(counters.get("text_type_rejected") or 0) + 1
+        return ""
+    return str(value).strip()[:limit]
+
+
+def normalize_result_row(row, model: str, prompt_version: str, *, strict: bool = True, counters: dict | None = None):
+    """One model row -> (verdict | None, reason).
+
+    reason is 'ok' | 'bad_index' | 'bad_valuable' | 'bad_score'. In strict mode a wrong
+    scalar type is a refusal, not something to coerce: a verdict has to be typed the way
+    the policy says, otherwise the topic stays eligible for the next batch.
+    """
+    if not isinstance(row, dict):
+        return None, "bad_index"
+    index = _parse_index(row.get("i", row.get("index", row.get("id"))), strict=strict)
+    if index is None and strict:
+        return None, "bad_index"
+    if strict:
+        valuable, source = _parse_valuable(row, strict=True)
+        if source == "type":
+            return None, "bad_valuable"
+        score = _parse_score(row.get("score"), strict=True)
+        if row.get("score") is not None and score is None:
+            return None, "bad_score"
+        if source == "missing":
+            if score is None:
+                return None, "bad_valuable"  # no bool and no usable score: not a verdict
+            valuable = score >= VALUABLE_MIN_SCORE  # documented policy
+    else:
+        valuable, _ = _parse_valuable(row, strict=False)
+        score = _parse_score(row.get("score"), strict=False)
+        if valuable is None and score is not None:
+            valuable = score >= VALUABLE_MIN_SCORE
+        if valuable is None:
+            valuable = False
     return {
         "i": index,
         "valuable": bool(valuable),
         "score": score,
-        "category": str(row.get("category") or "").strip()[:24],
-        "reason": str(row.get("reason") or "").strip()[:120],
-        "summary": str(row.get("summary") or "").strip()[:220],
+        "category": _parse_text(row, "category", strict=strict, counters=counters),
+        "reason": _parse_text(row, "reason", strict=strict, counters=counters),
+        "summary": _parse_text(row, "summary", strict=strict, counters=counters),
         "model": model,
         "prompt_version": prompt_version,
+    }, "ok"
+
+
+def normalize_verdict(row: dict, model: str, prompt_version: str) -> dict:
+    """Legacy permissive helper (string coercion), kept for existing callers and tests.
+
+    The batch path uses `normalize_result_row`/`normalize_batch`, which refuse wrong
+    scalar types instead of coercing them.
+    """
+    verdict, _ = normalize_result_row(row, model, prompt_version, strict=False)
+    return verdict
+
+
+def normalize_batch(
+    rows: list[dict],
+    batch: list[dict],
+    model: str,
+    prompt_version: str,
+    *,
+    snapshot: dict | None = None,
+) -> dict:
+    """Map model rows onto the dispatched batch, strictly and accountably.
+
+    Returns {"verdicts", "unjudged", "unjudged_reasons", "counts"}.
+
+    * A row is accepted only when its index is an integer inside the batch and every
+      scalar it carries is well typed.
+    * A duplicated index makes that index ambiguous: the whole index is refused. There is
+      no silent last-wins.
+    * Unknown / out-of-range indices, malformed rows and missing indices are counted, and
+      every topic without an accepted verdict stays eligible for the next cycle.
+    """
+    snapshot = snapshot or {}
+    valid: dict[int, dict] = {}
+    ambiguous: set[int] = set()
+    invalid_reasons: dict[str, int] = {}
+    counts = {
+        "returned": 0,
+        "accepted": 0,
+        "missing": 0,
+        "invalid": 0,
+        "ambiguous": 0,
+        "unknown": 0,
+        "text_type_rejected": 0,
     }
+    for row in rows or []:
+        counts["returned"] += 1
+        if not isinstance(row, dict):
+            counts["invalid"] += 1
+            invalid_reasons["not_object"] = invalid_reasons.get("not_object", 0) + 1
+            continue
+        verdict, reason = normalize_result_row(row, model, prompt_version, counters=counts)
+        if reason != "ok":
+            counts["invalid"] += 1
+            invalid_reasons[reason] = invalid_reasons.get(reason, 0) + 1
+            continue
+        index = verdict["i"]
+        if index < 1 or index > len(batch):
+            counts["unknown"] += 1
+            continue
+        if index in ambiguous:
+            continue
+        if index in valid:
+            valid.pop(index, None)
+            ambiguous.add(index)
+            continue
+        valid[index] = verdict
+
+    verdicts: list[dict] = []
+    unjudged: list[dict] = []
+    unjudged_reasons: dict[int, str] = {}
+    for i, topic in enumerate(batch, start=1):
+        verdict = valid.get(i)
+        tid = int(topic["id"])
+        if verdict is None:
+            unjudged.append(topic)
+            if i in ambiguous:
+                unjudged_reasons[tid] = "ambiguous"
+            else:
+                unjudged_reasons[tid] = "missing"
+                counts["missing"] += 1
+            continue
+        item = dict(verdict)
+        item["topic_id"] = topic["id"]
+        item["source_version"] = snapshot.get(tid) or topic.get("source_version")
+        verdicts.append(item)
+    counts["accepted"] = len(verdicts)
+    counts["ambiguous"] = len(ambiguous)
+    counts["invalid_reasons"] = invalid_reasons
+    return {"verdicts": verdicts, "unjudged": unjudged, "unjudged_reasons": unjudged_reasons, "counts": counts}
 
 
 class Filter:
@@ -150,6 +318,8 @@ class Filter:
         self.store = store
         self.log = logger
         self.last_error: str | None = None
+        # normalization detail (counts, per-topic reasons) of the most recent batch
+        self.last_normalization: dict | None = None
 
     # ------------------------------------------------------------------ transport
     def _post_chat(self, key: str, messages: list[dict], *, use_json_mode: bool = True) -> str:
@@ -222,8 +392,13 @@ class Filter:
         raise RuntimeError(f"filter call failed: {err}")
 
     # ---------------------------------------------------------------------- judge
-    def judge_batch(self, key: str, batch: list[dict]) -> tuple[list[dict], list[dict]]:
-        """Returns (verdicts, unjudged_topics)."""
+    def judge_batch(self, key: str, batch: list[dict], *, snapshot: dict | None = None) -> tuple[list[dict], list[dict]]:
+        """Returns (verdicts, unjudged_topics).
+
+        `snapshot` is the source version captured when this batch was dispatched
+        ({topic_id: version}); it travels with each verdict so a late answer cannot be
+        applied to bytes the model never saw.
+        """
         cfg = self.cfg["filter"]
         taste = ""
         try:
@@ -235,22 +410,9 @@ class Filter:
         prompt = build_user_prompt_with_taste(batch, taste, int(cfg.get("body_chars", 1200)))
         text = self.call_model(key, [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}])
         rows = extract_results(text)
-        by_index: dict[int, dict] = {}
-        for row in rows:
-            verdict = normalize_verdict(row, cfg["model"], cfg["prompt_version"])
-            if verdict["i"]:
-                by_index[verdict["i"]] = verdict
-        verdicts: list[dict] = []
-        unjudged: list[dict] = []
-        for i, topic in enumerate(batch, start=1):
-            verdict = by_index.get(i)
-            if verdict is None:
-                unjudged.append(topic)
-                continue
-            verdict = dict(verdict)
-            verdict["topic_id"] = topic["id"]
-            verdicts.append(verdict)
-        return verdicts, unjudged
+        result = normalize_batch(rows, batch, cfg["model"], cfg["prompt_version"], snapshot=snapshot)
+        self.last_normalization = result
+        return result["verdicts"], result["unjudged"]
 
     def run(self, *, limit: int | None = None) -> dict:
         key, key_source = resolve_api_key()
@@ -261,9 +423,17 @@ class Filter:
             "key_present": bool(key),
             "key_source": key_source,
             "batches_ok": 0,
+            "batches_partial": 0,
+            "batches_processed": 0,
             "batches_failed": 0,
             "judged": 0,
             "unjudged": 0,
+            "missing": 0,
+            "invalid": 0,
+            "ambiguous": 0,
+            "unknown": 0,
+            "stale": 0,
+            "partial": False,
             "picked": 0,
             "error": None,
             "finished_at": now_iso(),
@@ -280,8 +450,10 @@ class Filter:
         batch_size = int(cfg.get("batch_size", 8))
         for start in range(0, len(pending), batch_size):
             batch = pending[start : start + batch_size]
+            # immutable dispatch snapshot: versions as of the moment this batch is sent
+            snapshot = {int(t["id"]): t.get("source_version") for t in batch}
             try:
-                verdicts, unjudged = self.judge_batch(key, batch)
+                verdicts, unjudged = self.judge_batch(key, batch, snapshot=snapshot)
             except AuthError as exc:
                 summary.update(ok=False, batches_failed=summary["batches_failed"] + 1, error=str(exc))
                 self.last_error = str(exc)
@@ -292,17 +464,70 @@ class Filter:
                 self.last_error = str(exc)
                 self.store.add_failure("filter_batch", str(exc), context={"model": cfg["model"], "size": len(batch)})
                 continue
-            summary["batches_ok"] += 1
+            summary["batches_processed"] += 1
+            counts = (self.last_normalization or {}).get("counts") or {}
+            for name in ("missing", "invalid", "ambiguous", "unknown"):
+                summary[name] += int(counts.get(name) or 0)
+            batch_gaps = sum(int(counts.get(name) or 0) for name in ("missing", "invalid", "ambiguous", "unknown"))
+            if batch_gaps:
+                summary["batches_partial"] += 1
+            else:
+                summary["batches_ok"] += 1
             summary["unjudged"] += len(unjudged)
             for verdict in verdicts:
-                self.store.set_verdict(verdict["topic_id"], verdict)
+                status = self.store.set_verdict(
+                    verdict["topic_id"], verdict, source_version=verdict.get("source_version")
+                )
+                if status == "stale":
+                    # the bytes moved while the answer was in flight: the topic keeps its
+                    # current version and stays eligible, so nothing is lost by refusing
+                    summary["stale"] += 1
+                    self.store.add_failure(
+                        "filter_stale_verdict",
+                        "model answer arrived for an older source version",
+                        context={
+                            "topic_id": verdict["topic_id"],
+                            "judged_version": verdict.get("source_version"),
+                            "current_version": (self.store.get(verdict["topic_id"]) or {}).get("source_version"),
+                        },
+                    )
+                    continue
                 summary["judged"] += 1
                 if verdict["valuable"]:
                     summary["picked"] += 1
+            reasons = (self.last_normalization or {}).get("unjudged_reasons") or {}
             for topic in unjudged:
+                reason = reasons.get(int(topic["id"]), "missing")
+                stage = "filter_ambiguous_index" if reason == "ambiguous" else "filter_missing_index"
+                self.store.add_failure(stage, f"model answer {reason} for this topic", context={"topic_id": topic["id"]})
+            if counts.get("invalid") or counts.get("unknown"):
                 self.store.add_failure(
-                    "filter_missing_index", "model answer omitted this topic", context={"topic_id": topic["id"]}
+                    "filter_invalid_result",
+                    "model answer contained rows that cannot be attributed to a batch item",
+                    context={
+                        "invalid": int(counts.get("invalid") or 0),
+                        "unknown": int(counts.get("unknown") or 0),
+                        "reasons": counts.get("invalid_reasons") or {},
+                        "text_type_rejected": int(counts.get("text_type_rejected") or 0),
+                    },
                 )
             time.sleep(1.0)
+        gaps_total = summary["missing"] + summary["invalid"] + summary["ambiguous"] + summary["unknown"]
+        summary["partial"] = bool(gaps_total)
+        if summary["batches_failed"]:
+            # a hard call failure already recorded the streak; keep it
+            summary["ok"] = False
+        elif summary["partial"]:
+            # an accepted batch with holes is not a full success: the summary says so and
+            # the caller must not reset the filter failure streak
+            summary["ok"] = False
+            summary["error"] = (
+                f"partial filter result: {summary['invalid']} invalid, {summary['ambiguous']} ambiguous, "
+                f"{summary['missing']} missing, {summary['unknown']} unknown"
+            )
+        elif summary["batches_processed"] and not summary["judged"]:
+            # every batch came back but nothing landed: not a full success either
+            summary["ok"] = False
+            summary["error"] = summary.get("error") or "no verdict landed on the current source version"
         self.store.save()
         return summary

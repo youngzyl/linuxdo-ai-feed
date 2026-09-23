@@ -4,12 +4,16 @@ Endpoints
   GET  /                     static (public/)
   GET  /api/state            full payload for the page (CONTRACT.md §1)
   POST /api/refresh          kick a cycle in the background
-  GET  /api/queue            queue ids
-  POST /api/queue            replace queue  ({"queue":[id,...]} or {"add":id} / {"remove":id})
+  GET  /api/queue            收藏 (bookmark) ids - the third column
+  POST /api/queue            replace bookmarks ({"queue":[id,...]} or {"add":id} / {"remove":id})
   GET  /health               status + attention flag  (watchdog reads this)
   GET  /metrics              Prometheus text
   GET  /api/failures?n=20    RCA feed (newest first)
   GET  /fixtures/<file>      dev fixtures (frontend ?fixture=1)
+
+The `queue` wire name is kept for compatibility (the state file and the deployed client
+use it); the reader UI treats it as the bookmark list. An explicit vote (POST
+/api/feedback) only moves the manual override - it never edits this list.
 """
 from __future__ import annotations
 
@@ -363,7 +367,9 @@ def make_handler(app: App):
                             return self.error_json(400, str(exc))
                         except KeyError as exc:
                             return self.error_json(404, str(exc))
-                        # keep/skip already moved the queue inside one locked, saved update
+                        # The vote is the override only: 收藏 is a separate signal, so the
+                        # queue reported here is just the current bookmark list, unchanged
+                        # by this request.
                         return self.json_response(
                             200,
                             {

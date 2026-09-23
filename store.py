@@ -5,17 +5,31 @@ Single JSON file (data/state.json) written atomically; failure journal is JSONL
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import threading
 import time
+import unicodedata
 from pathlib import Path
 
 from config import owner_token, redact
 
 VERSION = 1
 FAILURE_LOG_CAP = 2000  # lines kept on disk
+
+# Explicit owner feedback. `manual_override` is null / keep / skip - there is deliberately
+# no read/bookmark value here: 收藏 is the queue's own membership (U01) and read state is
+# browser-local, so neither is server state.
+OVERRIDE_KEEP = "keep"
+OVERRIDE_SKIP = "skip"
+OVERRIDES = frozenset({OVERRIDE_KEEP, OVERRIDE_SKIP})
+
+# Source-version marker: "<scheme>:<hex>". The length and the digest are computed here,
+# never restated by callers or tests.
+SOURCE_VERSION_SCHEME = "sv1"
+SOURCE_VERSION_HEX = 16
 
 
 def now_iso() -> str:
@@ -31,6 +45,44 @@ def parse_iso(value: str | None):
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except Exception:
         return None
+
+
+def normalize_content(value) -> str:
+    """Whitespace/width-normalized text for the source fingerprint.
+
+    Width and whitespace are normalized so re-flowing the same text is not a new version.
+    """
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def source_fingerprint(topic: dict) -> str:
+    """Content version of what the filter actually judges.
+
+    Title plus the body once we have one, otherwise the listing excerpt. Popularity and
+    housekeeping fields (views / reply_count / like_count / bumped_at / detail_fetched)
+    are excluded on purpose: they change on every refresh without changing the text, and
+    treating them as new content would re-judge the whole feed on every cycle.
+    """
+    title = normalize_content(topic.get("title"))
+    body = normalize_content(topic.get("body_text")) or normalize_content(topic.get("excerpt"))
+    payload = f"title:{title}\nbody:{body}"
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:SOURCE_VERSION_HEX]
+    return f"{SOURCE_VERSION_SCHEME}:{digest}"
+
+
+def effective_state(model_valuable, manual_override) -> str:
+    """Reference rule: an explicit override outranks the model classification.
+
+    `model_valuable` is the model's own verdict (True/False/None when it never judged).
+    """
+    if manual_override == OVERRIDE_KEEP:
+        return "picked"
+    if manual_override == OVERRIDE_SKIP:
+        return "rejected"
+    if model_valuable is None:
+        return "pending"
+    return "picked" if model_valuable else "rejected"
 
 
 def public_error(value, limit: int = 70) -> str | None:
@@ -151,6 +203,7 @@ class Store:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self._load_failures()
             self._merge_feedback_journal()
+            self._migrate_state()
         if not self.path.exists():
             self.save()
 
@@ -183,6 +236,68 @@ class Store:
             if not current or (row.get("at") or "") >= (current.get("at") or ""):
                 best[tid] = row
         self.data["feedback"] = sorted(best.values(), key=lambda r: r.get("at") or "")
+
+    def _migrate_state(self) -> None:
+        """Bring legacy records up to the model-verdict / manual-override split.
+
+        Two things must not happen here:
+
+        * An override is derived **only** from an actual feedback record. The
+          `rescued`/`skipped` topic flags are display hints (three topics in the live
+          state file carry them with no vote row at all), so they never become intent.
+        * The legacy backlog must not turn into new work. An existing verdict is bound to
+          the topic's current source version, i.e. treated as "the version it judged";
+          only later content changes then invalidate it.
+        """
+        feedback: dict[int, dict] = {}
+        votes: dict[int, str] = {}
+        for row in self.data.get("feedback") or []:
+            if not isinstance(row, dict):
+                continue
+            try:
+                tid = int(row["id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            feedback[tid] = row
+            vote = str(row.get("vote") or "").strip().lower()
+            if vote in OVERRIDES:
+                votes[tid] = vote
+
+        for key, topic in self.data["topics"].items():
+            if not isinstance(topic, dict):
+                continue
+            try:
+                tid = int(key)
+            except (TypeError, ValueError):
+                tid = None
+            if "manual_override" not in topic and tid is not None and tid in votes:
+                topic["manual_override"] = votes[tid]
+            self._touch_source_version(topic)
+            filt = topic.get("filter")
+            if isinstance(filt, dict):
+                if not isinstance(filt.get("valuable"), bool):
+                    filt["valuable"] = self._legacy_model_value(topic, feedback.get(tid if tid is not None else -1))
+                if not filt.get("source_version"):
+                    filt["source_version"] = topic["source_version"]
+            self._refresh_state(topic)
+
+    def _legacy_model_value(self, topic: dict, row: dict | None):
+        """What the model itself decided, for records written before `valuable` existed.
+
+        The vote row remembers the state at vote time, which is the model's own decision
+        even when the owner then overrode it. For an untouched topic the stored state was
+        the model's decision by construction. Anything else stays unknown (None), which
+        simply makes the topic eligible for a fresh verdict.
+        """
+        at_vote = (row or {}).get("state_at_vote")
+        if at_vote in ("picked", "rejected"):
+            return at_vote == "picked"
+        if self.manual_override(topic):
+            return None  # overridden with no surviving vote record: do not guess a value
+        state = topic.get("state")
+        if state in ("picked", "rejected"):
+            return state == "picked"
+        return None
 
     def save(self) -> None:
         with self.lock:
@@ -248,6 +363,8 @@ class Store:
                     record.setdefault("body_text", "")
                     record.setdefault("detail_fetched", False)
                     record.setdefault("first_seen_at", now_iso())
+                    self._refresh_state(record)
+                    self._touch_source_version(record)
                     self.data["topics"][str(tid)] = record
                     new_ids.append(tid)
                     continue
@@ -256,6 +373,9 @@ class Store:
                         existing[key] = topic[key]
                 if topic.get("body_text") and not existing.get("body_text"):
                     existing["body_text"] = topic["body_text"]
+                # title/excerpt/body may have changed: keep the content version honest.
+                # Popularity-only refreshes land on the same fingerprint.
+                self._touch_source_version(existing)
         return {"new_ids": new_ids, "total": len(self.data["topics"])}
 
     def get(self, tid: int | str) -> dict | None:
@@ -267,32 +387,111 @@ class Store:
             return list(self.data["topics"].values())
 
     def pending(self, limit: int | None = None) -> list[dict]:
+        """Topics that still need a model verdict for their current source version.
+
+        This is eligibility for *work*, not the display state: a topic whose body was
+        enriched after it was judged comes back here even when the owner's override still
+        rules the display (see `needs_model_verdict`).
+        """
         with self.lock:
-            items = [t for t in self.data["topics"].values() if t.get("state") == "pending"]
+            items = [t for t in self.data["topics"].values() if self.needs_model_verdict(t)]
         items.sort(key=lambda t: (t.get("created_at") or "", int(t["id"])), reverse=True)
         return items[:limit] if limit else items
 
-    def set_verdict(self, tid: int | str, verdict: dict) -> None:
+    # ------------------------------------------------- model verdict vs. override
+    @staticmethod
+    def model_value(topic: dict):
+        """The model's own verdict (True/False), independent of any manual override."""
+        value = (topic.get("filter") or {}).get("valuable")
+        return value if isinstance(value, bool) else None
+
+    @staticmethod
+    def manual_override(topic: dict):
+        """The owner's explicit override for this topic: keep / skip / None."""
+        override = topic.get("manual_override")
+        return override if override in OVERRIDES else None
+
+    @staticmethod
+    def verdict_version(topic: dict):
+        """Source version the stored model verdict was produced from (None: legacy)."""
+        return (topic.get("filter") or {}).get("source_version")
+
+    def source_version(self, topic: dict) -> str:
+        return source_fingerprint(topic)
+
+    def needs_model_verdict(self, topic: dict) -> bool:
+        """No verdict yet, a verdict for older bytes, or a legacy record with no value."""
+        if self.model_value(topic) is None:
+            return True
+        return self.verdict_version(topic) != self.source_version(topic)
+
+    def _refresh_state(self, topic: dict) -> str:
+        """Recompute the derived display state from (model value, override)."""
+        topic["state"] = effective_state(self.model_value(topic), self.manual_override(topic))
+        return topic["state"]
+
+    def _touch_source_version(self, topic: dict) -> str:
+        version = source_fingerprint(topic)
+        topic["source_version"] = version
+        return version
+
+    def set_manual_override(self, tid: int | str, override) -> str:
+        """Set/clear the explicit override. Returns the resulting display state."""
+        if override is not None and override not in OVERRIDES:
+            raise ValueError(f"manual_override must be null/keep/skip, got {override!r}")
         with self.lock:
             topic = self.data["topics"].get(str(tid))
             if not topic:
-                return
-            topic["state"] = "picked" if verdict.get("valuable") else "rejected"
+                return "unknown_topic"
+            if override is None:
+                topic.pop("manual_override", None)
+            else:
+                topic["manual_override"] = override
+            return self._refresh_state(topic)
+
+    def clear_manual_override(self, tid: int | str) -> str:
+        """Drop the override: the latest model verdict (or pending) is exposed again."""
+        return self.set_manual_override(tid, None)
+
+    def set_verdict(self, tid: int | str, verdict: dict, *, source_version: str | None = None) -> str:
+        """Apply a model verdict. Returns 'applied' | 'stale' | 'unknown_topic'.
+
+        The override is untouched here: an explicit keep/skip keeps ruling the display
+        while the model verdict - and its provenance - is still recorded. When
+        `source_version` is supplied (the version captured when the batch was dispatched)
+        it is compared against the topic's current version, so an answer for older bytes
+        is refused and the topic stays eligible for the current version.
+        """
+        with self.lock:
+            topic = self.data["topics"].get(str(tid))
+            if not topic:
+                return "unknown_topic"
+            current = self._touch_source_version(topic)
+            if source_version is not None and source_version != current:
+                return "stale"
+            raw_value = verdict.get("valuable")
             topic["filter"] = {
+                "valuable": raw_value if isinstance(raw_value, bool) else None,
                 "score": verdict.get("score"),
                 "category": verdict.get("category"),
                 "reason": verdict.get("reason"),
                 "summary": verdict.get("summary"),
                 "model": verdict.get("model"),
                 "prompt_version": verdict.get("prompt_version"),
+                "source_version": current,
                 "at": now_iso(),
             }
+            self._refresh_state(topic)
+            return "applied"
 
     def set_fields(self, tid: int | str, **fields) -> None:
         with self.lock:
             topic = self.data["topics"].get(str(tid))
             if topic:
                 topic.update(fields)
+                # body enrichment (RSS upsert / detail fetch) must move the version with
+                # the content, otherwise the next batch would judge stale bytes
+                self._touch_source_version(topic)
 
     # ---------------------------------------------------------------------- queue
     def queue(self) -> list[int]:

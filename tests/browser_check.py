@@ -8,13 +8,14 @@ real vote is cast.
 
 Two phases:
   A. fixture mode (?fixture=1) - the local dev path must keep working with zero /api calls,
-     on desktop and on a 390x844 touch viewport (drawer, links, local queue toggle).
+     on desktop and on a 390x844 touch viewport (drawer, links, local bookmark toggle).
   B. real mode against the stub API - unauthenticated the page is read-only: the write
      controls are disabled with a reason, row clicks explain themselves and send nothing.
      After the owner token is supplied through the 管理 button, writes carry
-     `Authorization: Bearer`, the queue change is applied from the server's response, and a
-     refused vote surfaces an error instead of pretending success (and sends only ONE
-     request - no separate fire-and-forget queue write).
+     `Authorization: Bearer ...`; the bookmark change is applied from the server's
+     response and a refused vote surfaces an error instead of pretending success (and
+     sends only ONE request - no separate fire-and-forget queue write). An explicit vote
+     never adds or removes a bookmark: the two signals are independent.
 
 Usage: python3 tests/browser_check.py [--keep] ; exit code 0 = all checks passed.
 """
@@ -217,6 +218,13 @@ class StubHandler(http.server.SimpleHTTPRequestHandler):
         path = entry["path"]
         state = type(self).state
         if path == "/api/state":
+            # injectable failure modes for the network-UX checks (defaults: healthy)
+            status = int(state.get("state_status", 200) or 200)
+            if status != 200:
+                return self._json(status, {"error": "stub failure"})
+            delay = float(state.get("state_delay", 0) or 0)
+            if delay:
+                time.sleep(delay)
             return self._json(200, state["state"])
         if path == "/health":
             return self._json(200, state["health"])
@@ -258,13 +266,13 @@ class StubHandler(http.server.SimpleHTTPRequestHandler):
             ids = list(state["queue"])
             for topic in state["state"]["topics"]:
                 if int(topic["id"]) == tid:
+                    # Authorized reader contract: a vote is the manual override only.
+                    # It never adds or removes a bookmark (the stub used to mirror the
+                    # old queue coupling: keep queued, skip dequeued).
                     if vote == "keep":
                         topic["state"] = "picked"
-                        if tid not in ids:
-                            ids.append(tid)
                     elif vote == "skip":
                         topic["state"] = "rejected"
-                        ids = [x for x in ids if x != tid]
             state["queue"] = ids
             state["feedback"] = [{"id": tid, "vote": vote, "at": "2026-09-21T00:00:00Z"}]
             return self._json(
@@ -585,16 +593,22 @@ def main() -> int:
             check(local_queue == StubHandler.state["queue"] == [picked],
                   "B20 the local queue is the server's answer", f"{local_queue} vs {StubHandler.state['queue']}")
 
-            # Existing app semantics: the ROW click only queues from column 2. Once the topic
-            # is in the queue its row opens the preview, and the removal affordance is the
-            # drawer's 「移到待读」 button - which goes through the same toggleQueue path.
+            # Authorized reader contract: a bookmark adds membership - it does not move
+            # the topic. The picked topic renders in 精选 (col 2) and 收藏 (col 3); the
+            # 收藏 copy opens the preview (JS click: the open drawer can cover the right
+            # column, exactly as the old queue column was covered).
+            check(
+                cdp.evaluate("document.querySelectorAll('.cell--c2 .item[data-id=\"%d\"]').length" % picked) == 1
+                and cdp.evaluate("document.querySelectorAll('.cell--c3 .item[data-id=\"%d\"]').length" % picked) == 1,
+                "B20b a bookmark keeps the 精选 membership and gains 收藏",
+            )
             StubHandler.requests.clear()
-            aimed, point = mouse_click(cdp, '.item[data-id="%d"]' % picked)
+            cdp.evaluate("(function(){document.querySelector('.cell--c3 .item[data-id=\"%d\"]').click();return true;})()" % picked)
             settle(cdp, 0.9)
             writes = [r["body"] for r in StubHandler.requests if r["method"] == "POST"]
-            check(aimed and cdp.evaluate("!document.querySelector('#drawer').hidden") is True and writes == [],
-                  "B21 a queued row click opens the preview instead of writing",
-                  f"aimed={aimed} point={point} writes={json.dumps(writes)}")
+            check(cdp.evaluate("!document.querySelector('#drawer').hidden") is True and writes == [],
+                  "B21 the 收藏 copy opens the preview instead of writing",
+                  f"writes={json.dumps(writes)}")
 
             StubHandler.requests.clear()
             aimed, point = mouse_click(cdp, "#d-queue")
@@ -605,7 +619,7 @@ def main() -> int:
             check(cdp.evaluate("JSON.parse(localStorage.getItem('linuxdo-ai.queue')||'[]')") == [],
                   "B23 the local queue follows the removal", str(cdp.evaluate("localStorage.getItem('linuxdo-ai.queue')")))
 
-            print("--- phase B: vote contract (one request, queue from the response) ---")
+            print("--- phase B: vote contract (one request, bookmark untouched) ---")
             StubHandler.state["queue"] = []
             StubHandler.requests.clear()
             open_page(cdp, f"{base}/index.html?open={picked}", width=1280, height=900, mobile=False, touch=False)
@@ -621,7 +635,9 @@ def main() -> int:
             check(isinstance(vote_body, dict) and vote_body.get("vote") == "keep" and vote_body.get("id") == picked,
                   "B28 the vote body carries the explicit vote", json.dumps(vote_body))
             local_queue = cdp.evaluate("JSON.parse(localStorage.getItem('linuxdo-ai.queue')||'[]')")
-            check(local_queue == [picked], "B29 the queue from the vote response was applied", str(local_queue))
+            check(local_queue == [] and StubHandler.state["queue"] == [],
+                  "B29 a vote leaves the bookmark list untouched, locally and on the server",
+                  f"local={local_queue} server={StubHandler.state['queue']}")
 
             print("--- phase B: a refused write must be visible ---")
             StubHandler.state["fail_vote"] = True

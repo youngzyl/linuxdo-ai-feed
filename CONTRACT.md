@@ -61,10 +61,20 @@ Backend binds `127.0.0.1:8791` and serves BOTH the static frontend (`public/`) a
 `state` is the single source of truth for which column renders a topic:
 
 * `pending`  — scraped, not filtered yet
-* `picked`   — deepseek judged it valuable  (middle column)
+* `picked`   — deepseek judged it valuable  (middle column, 精选)
 * `rejected` — deepseek judged it low value (stays in the left column, dimmed)
 
 `filter` is `null` when `state == "pending"`.
+
+Column membership (v2, settled) — a topic can hold **two** memberships at once:
+
+* column 1 全部    — every topic that is not `picked` (`pending` + `rejected`)
+* column 2 精选    — `picked`
+* column 3 收藏    — the bookmark list (see §7); membership is independent of `state`
+
+A bookmarked `rejected` topic renders in 收藏 and in 全部; a bookmarked `picked` topic renders
+in both 精选 and 收藏. Slot alignment is unchanged: it is the slot, not the topic, that stays
+unique per column, so row *i* still lines up across all three columns.
 
 ## 2. Other endpoints
 
@@ -74,7 +84,7 @@ Backend binds `127.0.0.1:8791` and serves BOTH the static frontend (`public/`) a
 | GET | `/health` | see §3 |
 | GET | `/metrics` | Prometheus text: `linuxdo_ai_fetch_consecutive_failures`, `linuxdo_ai_topics_total`, `linuxdo_ai_picked_total`, `linuxdo_ai_last_success_timestamp_seconds`, `linuxdo_ai_cycles_total{result="ok\|fail"}` |
 | GET | `/api/failures?n=20` | `{"failures":[{"at":...,"stage":"fetch\|filter","attempt":3,"error":"...","context":{...}}]}` newest first — this is the RCA feed for the agent |
-| GET | `/api/queue` / POST `/api/queue` | `{"queue":[topic_id,...]}` — server-side copy of the right column (client also keeps localStorage) |
+| GET | `/api/queue` / POST `/api/queue` | `{"queue":[topic_id,...]}` — 收藏 (bookmarks), persisted server-side; the wire name `queue` is kept for compatibility and the client also caches the list in `localStorage`. Body: `{"add": id}` / `{"remove": id}`. Independent of `/api/feedback` (see §7) |
 
 ## 3. GET /health
 
@@ -117,11 +127,12 @@ Backend binds `127.0.0.1:8791` and serves BOTH the static frontend (`public/`) a
 Files: `public/index.html`, `public/styles.css`, `public/app.js` (no framework, no build step, no CDN —
 must work offline/behind the tunnel). Data via `fetch('/api/state')`.
 
-Layout (desktop >= 900px): one header bar + three columns All / Picked / Queue.
+Layout (desktop >= 900px): one header bar + three columns 全部 / 精选 / 收藏.
 
 * Row-aligned slots: a topic occupies the SAME row index in every column. Use CSS grid rows so
-  column 1/2/3 cells at row *i* line up horizontally. A topic is rendered in exactly one column
-  (by its `state` + queue membership); the other two cells are empty slots.
+  column 1/2/3 cells at row *i* line up horizontally. Its own membership decides column 1 and
+  column 2 (see §1); column 3 is the bookmark list, so one topic may fill two slots. Empty slots
+  keep the old meaning: a cell is blank when that list has no item for that row.
 * `gap` mode (default): empty slots keep their height with a thin dimmed hairline marker → the
   filtering result is visible as aligned holes. `compact` mode: empty slots collapse and surviving
   items pull up (per column, so rows re-flow but semantics stay per column).
@@ -129,15 +140,19 @@ Layout (desktop >= 900px): one header bar + three columns All / Picked / Queue.
   `prefers-reduced-motion: reduce` → no movement).
 * Refresh: newly picked topics (not seen as picked in the previous state) animate once from their
   column-1 slot into the middle column (fade + slide, once, no replay for already-picked ones).
-* Click a middle-column item → it moves to the right column (Queue, persisted; `localStorage` + POST /api/queue).
+* Click a 精选 item → toggles 收藏 (the 收藏 copy is a second membership, not a move). Copy is
+  settled: 收藏 / 取消收藏, 纳入精选, 排除, 原文, 备注（可选） / placeholder 补充筛选偏好.
+  No conversational copy (教筛选器 / 漏掉了 / 下一轮会读到 / 后台可能正在重启 are all banned).
 * Preview: desktop hover ≥250 ms (and keyboard focus) or mobile tap → detail drawer/panel with title,
   meta line (author · created · replies · views · category · tags), `summary`/`reason` when present,
   `body_text` (or `excerpt`), and a link to the original topic (`target="_blank" rel="noopener"`).
-* Mobile (< 900px): three tabs (全部 / 已筛 / 待读) + single column list; same drawer as bottom sheet;
-  touch targets >= 44 px.
-* Header: site name, `fetched_at` (relative, e.g. `12 分钟前`), counts `全部 N · 通过 N · 待读 N`,
-  model label (`deepseek-v4.1-flash`), refresh button, gap/compact toggle. Show a small warning chip
-  when GET /health returns `attention.needed = true`.
+* Mobile (< 900px): three tabs (全部 / 精选 / 收藏) + single column list; same drawer as bottom sheet;
+  touch targets >= 44 px. A topic is listed once per tab: the 收藏 membership is folded into 全部/精选.
+* Header: site name with the subtitle 浏览新帖，发现值得读的内容。 inside the brand block, `fetched_at`
+  (relative, e.g. `12 分钟前`), counts `全部 N · 精选 N · 收藏 N`, model label, refresh button,
+  gap/compact toggle, and a management button that ALWAYS reads 管理 (fixed geometry; the auth state
+  is a small indicator/dot plus the title — never a changed label). Warning chip on
+  `attention.needed = true`.
 * Style: Anthropic-research *editorial* feel — serif display headings, sans body, generous whitespace,
   1 px low-contrast rules instead of card shadows, one accent color, small caps labels, footnote-style
   meta (`筛选模型 · … · 时间`). Light + dark via `prefers-color-scheme`. Body 15–16 px / 1.6,
@@ -151,3 +166,47 @@ Layout (desktop >= 900px): one header bar + three columns All / Picked / Queue.
 categories/scores, one topic with empty `body_text`) so the UI can be developed and screenshotted
 without the backend running. `file://` + a `?fixture=1` switch may load it via `fetch('fixtures/state.sample.json')`
 in dev only.
+
+## 7. 收藏 (bookmarks) and 已读 (browser-local read state)
+
+Two separate signals, deliberately not coupled:
+
+**收藏 — the third column.** Persisted with the existing `queue` storage and `/api/queue` wire
+name (no migration, no new shape), but the semantics are bookmarks:
+
+* Adding or removing a bookmark NEVER records a keep/skip preference, and a keep/skip vote NEVER
+  adds or removes a bookmark (`learn._apply_explicit_effects` now only writes the manual override).
+* Bookmarking a non-picked topic (a rejected one, say) makes it show under 收藏 while it stays in
+  its own column: membership is independent of the model verdict, so one topic can hold two slots.
+* Every pre-existing queue entry stays in the list as a bookmark — which of them were meant as
+  "read later" and which as "keep" cannot be inferred, so nothing gets migrated away.
+
+**已读 — reading position.** Browser-local `localStorage` only
+(`linuxdo-ai.read:<apiBase or page origin>`), never a server write, so it survives a reload but is
+per browser (another device does not see it) and is not owner-authenticated:
+
+* An explicit preview open (click / tap / keyboard, or the `?open=` dev deep link) marks the topic
+  read once the preview really carries content (`body_text` or `excerpt`). A hover/focus preview is
+  a prefetch and marks nothing; a preview with no body waits for the original link, and clicking
+  `原文` marks read even when no body was fetched.
+* Re-opening the topic the drawer already shows does not mark again, so a manual 未读 toggle sticks
+  while the drawer stays open (including the 30 s time refresh); moving to another topic marks again.
+* Display: read rows drop one step in title weight and colour; unread rows keep the stronger title
+  plus one small dot. No per-row 已读 text or badge — the only 已读 strings in the UI are the icon
+  control's `aria-label`/`title` (标记为已读 / 标记为未读), which is the reversible, icon-only control.
+* Bounded (the most recent 1000 ids) and tolerant of blocked or malformed storage (falls back to
+  unread instead of throwing). A `storage` event from another tab of the same deployment is mirrored.
+
+**Network UX.** One bounded deadline per `/api/state` read (`AbortController`, default 12 s,
+overridable in dev with `?readtimeout=`), and overlapping refresh / retry / 30 s-tick reads are
+deduplicated into a single in-flight read. A failed read reports what actually happened — HTTP
+status, deadline, or connection error — and an existing successful snapshot stays rendered with a
+stale notice instead of being blanked (no backend-restart guessing). No retry storms, no write
+retries, and no persistent copy of secrets or full state.
+
+**Collapsed technical facts.** A failed read also fills a collapsed 技术详情 block inside the error
+panel, with four safe lines and nothing more: the category (`timeout` / `http <status>` / `network`
+/ `payload`), the fixed trusted endpoint path (`/api/state`), the client-side failure time
+(ISO 8601, `Z`) and the last successful read time (`—` when there has not been one). It never
+contains a full URL or query string, headers, tokens or response bodies, and it is never sent
+anywhere — there is no telemetry endpoint. The user's browser clock is the only clock involved.

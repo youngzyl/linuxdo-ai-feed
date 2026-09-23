@@ -276,16 +276,17 @@ class TestOwnerWrites(OwnerApiCase):
         reloaded = Store(self.dir / "state.json", self.dir / "failures.jsonl")
         self.assertEqual(reloaded.queue(), [11])
 
-    def test_keep_vote_moves_the_topic_into_the_queue_in_one_request(self):
+    def test_keep_vote_does_not_touch_bookmarks(self):
+        """Authorized reader contract: the vote is the manual override, nothing else."""
         status, _, raw = self.req("POST", "/api/feedback", {"id": 22, "vote": "keep", "note": "架构分析我要"}, token=OWNER_TOKEN)
         self.assertEqual(status, 200, raw[:200])
         payload = self.body((status, {}, raw))
-        self.assertEqual(payload["queue"], [22], "keep must queue the topic in the same locked update")
+        self.assertEqual(payload["queue"], [], "keep must not bookmark the topic")
         self.assertEqual(payload["votes"]["keep"], 1)
-        self.assertEqual(payload["counts"]["queue"], 1)
+        self.assertEqual(payload["counts"]["queue"], 0)
         self.assertEqual(payload["topic"]["state"], "picked")
         reloaded = Store(self.dir / "state.json", self.dir / "failures.jsonl")
-        self.assertEqual(reloaded.queue(), [22])
+        self.assertEqual(reloaded.queue(), [])
         self.assertEqual(reloaded.get(22)["state"], "picked")
 
     def test_a_refused_write_sends_exactly_one_response_and_mutates_nothing(self):
@@ -300,13 +301,14 @@ class TestOwnerWrites(OwnerApiCase):
         self.assertIn(b"403", raw.split(b"\r\n", 1)[0])
         self.assertEqual(self.store.queue(), [], "a refused write must not mutate state")
 
-    def test_skip_vote_removes_the_topic_from_the_queue(self):
+    def test_skip_vote_keeps_the_bookmark(self):
         self.req("POST", "/api/queue", {"add": 11}, token=OWNER_TOKEN)
         status, _, raw = self.req("POST", "/api/feedback", {"id": 11, "vote": "skip"}, token=OWNER_TOKEN)
         self.assertEqual(status, 200, raw[:200])
         payload = self.body((status, {}, raw))
-        self.assertEqual(payload["queue"], [])
+        self.assertEqual(payload["queue"], [11], "排除 must not remove the bookmark")
         self.assertEqual(payload["topic"]["state"], "rejected")
+        self.assertEqual(self.store.queue(), [11])
 
     def test_clear_vote_is_authenticated(self):
         self.assertEqual(self.req("POST", "/api/feedback", {"id": 11, "vote": "clear"})[0], 401)

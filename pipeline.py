@@ -99,13 +99,35 @@ class Pipeline:
                 summary = self.filter.run()
                 self.store.section_replace("filter", **summary)
                 result["filter"] = summary
+                if summary.get("partial"):
+                    # an accepted batch with holes: visible in health AND in the RCA journal,
+                    # so a slowly degrading model answer is not silently a "success"
+                    self.store.add_failure(
+                        "filter_partial",
+                        str(summary.get("error") or "partial filter result"),
+                        context={
+                            name: summary.get(name)
+                            for name in ("missing", "invalid", "ambiguous", "unknown", "judged", "batches_partial")
+                        },
+                    )
+                    self.log(
+                        "filter partial: {judged} judged, {missing} missing, {invalid} invalid, "
+                        "{ambiguous} ambiguous, {unknown} unknown".format(
+                            judged=summary.get("judged", 0),
+                            missing=summary.get("missing", 0),
+                            invalid=summary.get("invalid", 0),
+                            ambiguous=summary.get("ambiguous", 0),
+                            unknown=summary.get("unknown", 0),
+                        )
+                    )
                 if not summary["key_present"]:
                     self.store.health_update(status="degraded")
                 elif summary["ok"]:
                     self.store.record_filter_success()
                 else:
                     # the filter stage keeps its own streak: consecutive fetch-ok /
-                    # filter-fail cycles must reach the attention threshold
+                    # filter-fail cycles must reach the attention threshold. A partial
+                    # result lands here too - it must not reset the streak.
                     self.store.record_filter_failure(summary.get("error"))
                 self.store.save()
             else:
