@@ -123,30 +123,52 @@ body {
 
 .masthead__top {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
-  gap: var(--s5);
+  gap: var(--s4) var(--s5);
 }
+
+.masthead__brand { min-width: 0; }
 
 .brand {
   margin: var(--s2) 0 0;
   font: 600 30px/1.15 var(--serif);
   letter-spacing: -.01em;
+  white-space: nowrap;   /* the title never breaks into an odd second line */
+}
+
+.brand__sub {
+  margin: var(--s2) 0 0;
+  font: 13px/1.5 var(--sans);
+  color: var(--dim);
 }
 
 .masthead__tools {
   display: flex;
   gap: var(--s2);
   padding-bottom: var(--s1);
+  margin-left: auto;     /* stays right-aligned when the tools wrap under the brand */
 }
 
-.standfirst {
-  max-width: 62ch;
-  margin: var(--s3) 0 0;
-  font: 15px/1.6 var(--serif);
-  color: var(--fg-soft);
+/* management control: the label is always 管理 — the connection state is the small dot
+   plus the title, and the dot slot stays reserved so the button never changes size */
+#owner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 78px;
 }
-.standfirst em { font-style: italic; }
+#owner::after {
+  content: "";
+  flex: none;
+  width: 5px;
+  height: 5px;
+  margin-left: var(--s2);
+  border-radius: 50%;
+  background: transparent;
+}
+#owner[data-owner="on"]::after { background: var(--accent); }
 
 .meta-line {
   display: flex;
@@ -270,6 +292,7 @@ body {
   min-height: 44px;
   margin-bottom: -1px;
   cursor: pointer;
+  white-space: nowrap;   /* a tab label never wraps into a second line */
 }
 .tab[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
 
@@ -327,19 +350,44 @@ body {
   .board { grid-template-columns: minmax(0, 1fr); }
   /* single list, one notice for whichever list is being shown */
   .empties { display: block; padding: 0 0 var(--s4); }
-  /* single list: only the active tab's column cells take part in flow */
+  /* single list: one tab = one membership, each topic listed once.
+     全部 = 全部 cells + 精选 cells; 精选 = 精选 cells; 收藏 = 收藏 cells.
+     The 收藏 cell is a *second* membership a topic can hold (point 3 of the settled
+     contract), so it is hidden in the 全部/精选 tabs - otherwise a bookmarked topic
+     would be listed twice in the same single-column list. */
   .board[data-tab="all"] .cell--c1,
   .board[data-tab="all"] .cell--c2,
-  .board[data-tab="all"] .cell--c3 { display: block; }
+  .board[data-tab="picked"] .cell--c2,
+  .board[data-tab="queue"] .cell--c3 { display: block; }
+  .board[data-tab="all"] .cell--c3,
+  .board[data-tab="picked"] .cell--c3,
   .board[data-tab="picked"] .cell--c1,
   .board[data-tab="queue"] .cell--c1,
   .board[data-tab="queue"] .cell--c2 { display: none; }
-  /* 已筛 = every picked topic, whether or not it is queued */
-  .board[data-tab="picked"] .cell--c2,
-  .board[data-tab="picked"] .cell--c3,
-  .board[data-tab="queue"] .cell--c3 { display: block; }
   /* single list: no row alignment, so empty slots carry no meaning */
   .board[data-tab] .cell--empty { display: none; }
+}
+
+/* read state (authorized reader contract): unread rows carry the stronger title plus one
+   quiet dot; read rows drop both and use the muted-but-readable title. No per-row 已读
+   text or badge. The right padding is uniform, so nothing shifts when the dot goes. */
+.item__title { padding-right: var(--s4); }
+
+.item.is-read .item__title {
+  font-weight: 400;
+  color: var(--dim);
+}
+
+.item:not(.is-read) .item__title::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: calc(var(--row-pad-y) + .7em);
+  margin-top: -2px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--dim-2);
 }
 
 .cell {
@@ -585,6 +633,23 @@ body {
 }
 .errorstate .btn { margin-top: var(--s4); }
 
+/* collapsed technical facts of a failed read: category, the fixed trusted endpoint path,
+   the client-side failure time and the last successful read. Nothing else - no URL with
+   query or credentials, no headers, no response bodies, and no remote telemetry. */
+.errorstate__tech {
+  margin: var(--s4) 0 0;
+  font: 12px/1.6 var(--sans);
+  color: var(--dim);
+}
+.errorstate__tech summary { cursor: pointer; }
+.errorstate__facts {
+  margin: var(--s2) 0 0;
+  font: 12px/1.7 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--dim);
+}
+
 /* ------------------------------------------------------------------ drawer */
 
 .drawer {
@@ -775,4 +840,38 @@ body {
   .item.is-current .item__title { text-decoration: underline; text-decoration-thickness: 1px; }
 
   .sk { background: GrayText; }
+}
+
+/* ---------------------------------------------------- icon controls (read state) */
+
+.drawer__headtools {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+/* icon-only read/unread control: the check draws itself when the topic is read.
+   aria-label/title carry the action, so no wordy UI is needed next to it. */
+.btn--icon {
+  padding: 0;
+  width: 32px;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.readicon { display: block; }
+.readicon__check { opacity: 0; }
+#d-read[aria-pressed="true"] { color: var(--accent); border-color: var(--accent-soft); }
+#d-read[aria-pressed="true"] .readicon__check { opacity: 1; }
+
+@media (max-width: 899px) {
+  .btn--icon { width: 44px; min-height: 44px; }
+}
+
+@media (forced-colors: active) {
+  .item:not(.is-read) .item__title::after { background: CanvasText; }
+  #owner::after { background: transparent; }
+  #owner[data-owner="on"]::after { background: Highlight; }
+  #d-read[aria-pressed="true"] .readicon__check { opacity: 1; }
 }
