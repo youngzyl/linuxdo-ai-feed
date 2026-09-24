@@ -20,6 +20,7 @@
     health: '/health',
     queue: '/api/queue',
     feedback: '/api/feedback',
+    topic: '/api/topic/',   /* one OP body on demand (CONTRACT.md §1.1) */
     fixtureBase: 'fixtures/state.sample.json',
     fixtureNext: 'fixtures/state.sample.next.json',
     lsQueue: 'linuxdo-ai.queue',
@@ -28,7 +29,13 @@
     lsRead: 'linuxdo-ai.read',
     ssOwner: 'linuxdo-ai.ownerToken',
     readCap: 1000,        /* bounded browser-local read set (oldest ids are dropped) */
-    readDeadlineMs: 12000,/* one bounded deadline per /api/state read */
+    bodyCap: 50,          /* bounded in-memory body cache (oldest entry is dropped) */
+    readDeadlineMs: 30000,/* one bounded deadline per read, list and body alike. Set from the
+                             incident HAR: 275712 captured body bytes over 11.791 s of receive
+                             time = 23383 B/s (content-length 2718951), so the compressed list
+                             shape of ~347 KB needs ~14.8 s on that connection - the previous 12 s
+                             bound aborted a read that was still progressing. Dev/harness can
+                             shorten it with ?readtimeout=. */
     hoverMs: 250,
     closeMs: 180,
     animMs: 300,     /* FLIP duration (brief: 280-340ms) */
@@ -66,8 +73,16 @@
     return Math.min(Math.max(asked, 400), 60000);
   })();
 
-  /* the browser test reads these; no token is ever exposed */
-  window.LINUXDO_AI_DEBUG = { apiBase: API_BASE, sameOrigin: API_BASE === '', readDeadlineMs: READ_DEADLINE };
+  /* the browser test reads these; no token is ever exposed. The body-cache probes exist for
+     the bounded-cache checks (size / keys / put) and carry no user data. */
+  window.LINUXDO_AI_DEBUG = {
+    apiBase: API_BASE,
+    sameOrigin: API_BASE === '',
+    readDeadlineMs: READ_DEADLINE,
+    bodyCacheSize: function () { return bodyCache.size; },
+    bodyCacheIds: function () { return Array.from(bodyCache.keys()); },
+    bodyCachePut: function (id, text) { cacheBody(Number(id), String(text)); }
+  };
 
   const DEV = params.get('fixture') === '1';
   const DEV_HEALTH = params.get('health');
@@ -112,6 +127,7 @@
     dReason: $('#d-reason'),
     dSummary: $('#d-summary'),
     dBody: $('#d-body'),
+    dBodyNote: $('#d-bodynote'),
     dQueue: $('#d-queue'),
     dKeep: $('#d-keep'),
     dSkip: $('#d-skip'),
@@ -147,15 +163,19 @@
   let closeTimer = 0;
   let hideTimer = 0;
   let tickTimer = 0;
-  let lastInput = null; /* 'mouse' | 'touch' | 'keyboard' — decides click semantics */
+  let lastInput = null; /* 'mouse' | 'touch' | 'keyboard' — decides whether a focus is a keyboard one */
+  /* True only while closeDrawer hands the focus back to the row the preview came from: the
+     focus event that fires synchronously there is a restoration, not a fresh keyboard preview. */
+  let restoringFocus = false;
+
+  /* One drawer visit = one explicit open. `gen` invalidates completions from an earlier visit
+     (a closed drawer, or a switch to another topic), `auto` is a pending automatic mark, and
+     `manual` records that the reader used a read control, which cancels that automatic mark. */
+  const visit = { gen: 0, auto: false, manual: false };
 
   const mDesktop = window.matchMedia('(min-width: 900px)');
-  const mHover = window.matchMedia('(hover: hover)');
   const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const isDesktop = () => mDesktop.matches;
-  /* Never decide from matchMedia('(hover)') alone: headless and exotic
-     pointers report hover:none on a real mouse. Follow the gesture instead. */
-  const isTouchGesture = () => lastInput === 'touch' || (lastInput === null && !mHover.matches);
 
   /* ------------------------------------------------------------------ utils */
 
@@ -232,9 +252,11 @@
     return readIds(readKey(), CFG.readCap);
   }
 
-  function markRead(id, value) {
+  function markRead(id, value, manual) {
     const n = Number(id);
     if (!Number.isFinite(n)) return;
+    /* the reader's own control wins for this visit: no later automatic mark may undo it */
+    if (manual) { visit.manual = true; visit.auto = false; }
     const want = (value === undefined) ? !S.read.has(n) : !!value;
     if (want === S.read.has(n)) { syncReadNodes(n); return; }
     if (want) S.read.add(n);
@@ -312,14 +334,19 @@
 
   /* -------------------------------------------------------------- data load */
 
+  /* The reader asks for the body-free list shape (?view=list, CONTRACT.md §1.1) plus the old
+     cache buster. The plain read is untouched and still carries body_text, so a tab built
+     before that split keeps working against this server. Fixture mode is unchanged. */
   function stateUrl(opts) {
-    const bust = (opts && opts.bust === false) ? '' : ((opts && opts.bust) || '?t=' + Date.now());
-    if (!DEV) return api(CFG.state) + (bust || '?t=' + Date.now());
+    const bust = (opts && opts.bust === false)
+      ? ''
+      : String((opts && opts.bust) || 't=' + Date.now()).replace(/^\?/, '');
+    if (!DEV) return api(CFG.state) + '?view=list' + (bust ? '&' + bust : '');
     const file = (opts && opts.next) ? CFG.fixtureNext : CFG.fixtureBase;
-    return file + (bust || '?t=' + Date.now());
+    return file + '?' + (bust || 't=' + Date.now());
   }
 
-  /* One bounded read per pull: a single deadline so a hung connection cannot leave the
+  /* One bounded read per pull: a single deadline (CFG.readDeadlineMs) so a hung connection cannot leave the
      board loading forever, and a classified error so the notice tells the truth about
      what happened (HTTP status vs deadline vs connection) instead of guessing why. */
   async function fetchState(opts) {
@@ -341,6 +368,15 @@
       try {
         return await res.json();
       } catch (err) {
+        /* The deadline can fire while the body is still arriving (the incident HAR had
+           headers in 257 ms and the payload still in flight), and aborting rejects the BODY
+           read rather than the fetch. Classify that first, so it is reported as the deadline
+           it is instead of as a malformed payload. */
+        if (controller && controller.signal.aborted) {
+          const t = new Error('timeout');
+          t.kind = 'timeout';
+          throw t;
+        }
         const bad = new Error('payload');
         bad.kind = 'payload';
         throw bad;
@@ -369,9 +405,16 @@
     return 'network';
   }
 
+  /* the deadline as the reader sees it: seconds, one decimal at most (dev can go sub-second) */
+  function deadlineSeconds() {
+    return String(Math.round(READ_DEADLINE / 100) / 10);
+  }
+
   function describeReadError(err) {
     const kind = err && err.kind;
-    if (kind === 'timeout') return '读取超时（服务器 ' + Math.round(READ_DEADLINE / 1000) + ' 秒内没有响应）';
+    /* the incident HAR answerd the headers in 257 ms and then stalled the body: the honest
+       sentence is about finishing the read, not about the server never answering */
+    if (kind === 'timeout') return '读取超时（' + deadlineSeconds() + ' 秒内未能读完响应）';
     if (kind === 'http') return '服务器返回 HTTP ' + err.status;
     if (kind === 'payload') return '服务器返回的内容不是 JSON';
     return '连不上服务器（' + ((err && err.message) ? err.message : '网络错误') + '）';
@@ -429,13 +472,6 @@
     return t.state !== 'picked';
   }
 
-  function nodeCol(node) {
-    const cell = node && node.closest ? node.closest('.cell') : null;
-    if (!cell) return 0;
-    const m = /cell--c(\d)/.exec(cell.className);
-    return m ? Number(m[1]) : 0;
-  }
-
   function pickedIds(data) {
     return data.topics.filter((t) => t.state === 'picked').map((t) => t.id);
   }
@@ -488,10 +524,13 @@
   }
 
   /* the OP body only earns a row line when it is short; long bodies stay in the
-     drawer so the picked row keeps its scannable hierarchy */
+     drawer so the picked row keeps its scannable hierarchy. The line is built from the
+     excerpt only: /api/state no longer carries body_text (CONTRACT.md §1.1), so nothing a
+     row renders may depend on it. The title and filter.summary already have their own rows,
+     and the body itself is fetched on demand when the drawer opens. */
   const SHORT_EXCERPT_MAX = 140;
   function shortExcerpt(t) {
-    const text = String(t.body_text || t.excerpt || '').replace(/\s+/g, ' ').trim();
+    const text = String(t.excerpt || '').replace(/\s+/g, ' ').trim();
     if (!text || text.length > SHORT_EXCERPT_MAX) return '';
     return text;
   }
@@ -838,6 +877,18 @@
   /* ------------------------------------------------------------ state pulls */
 
   function applyState(data, prevRects) {
+    /* A newly accepted snapshot invalidates everything the previous one promised: the in-flight
+       reads are aborted and their slots released (so a fresh explicit open can request the
+       CURRENT data immediately instead of deduping onto a dead request), and no cached body or
+       failure note survives the refresh. */
+    snapshotGen += 1;
+    bodyPending.forEach((req) => {
+      if (req.controller) req.controller.abort();
+      window.clearTimeout(req.timer);
+    });
+    bodyPending.clear();
+    bodyCache.clear();
+    bodyFail.clear();
     S.data = data;
     S.topics.clear();
     data.topics.forEach((t) => S.topics.set(t.id, t));
@@ -890,6 +941,176 @@
 
   const STATE_LABEL = { picked: '精选', rejected: '未入选', pending: '待筛选' };
 
+  /* --------------------------------------------------- the OP body, on demand */
+  /* The list shape carries has_body instead of body_text (CONTRACT.md §1.1), so the drawer
+     fetches the one body it is about to show. `has_body` is NOT displayed content: it only
+     schedules that fetch. Bodies live in an in-memory cache keyed by topic id, oldest evicted
+     first (CFG.bodyCap), and the cache is dropped whenever a new state snapshot is accepted,
+     so a body can never outlive the list that announced it. Fixture mode (`?fixture=1`) ships
+     body_text in the file itself and never talks to the API. */
+  const bodyCache = new Map();     /* topic id -> body_text */
+  /* One in-flight detail request per topic, keyed by topic id but identified by the request
+     object itself: {snapshotGen, visitGen, controller, timer}. A request belongs to the snapshot
+     that asked for it AND to the drawer visit that subscribed to it, so a close/reopen can
+     subscribe to a read already in flight and a refreshed snapshot can start a fresh one
+     immediately instead of waiting for the old one to end. */
+  const bodyPending = new Map();
+  const bodyFail = new Set();      /* ids whose current read failed (retried on a new open) */
+  let snapshotGen = 0;             /* bumped on every accepted /api/state snapshot */
+  const EMPTY_BODY_COPY = '正文未抓取。可以点原文链接查看。';
+  const LOADING_BODY_COPY = '正在读取正文…';
+  const BODY_FAIL_NOTE = '正文读取失败，可点原文链接查看。';
+
+  function cacheBody(id, text) {
+    if (bodyCache.has(id)) bodyCache.delete(id);   /* re-insert: newest goes last */
+    bodyCache.set(id, text);
+    while (bodyCache.size > CFG.bodyCap) bodyCache.delete(bodyCache.keys().next().value);
+  }
+
+  /* the cache first, then a payload that shipped the body itself (dev fixtures) */
+  function knownBody(t) {
+    if (!t) return '';
+    if (bodyCache.has(t.id)) return bodyCache.get(t.id);
+    if (typeof t.body_text === 'string' && t.body_text) {
+      cacheBody(t.id, t.body_text);
+      return t.body_text;
+    }
+    return '';
+  }
+
+  /* has_body is authoritative when the payload carries it; a fixture payload without the
+     flag is read from its own body_text, so a topic that has a body is never rendered as
+     if it had none */
+  function topicHasBody(t) {
+    if (!t) return false;
+    if (typeof t.has_body === 'boolean') return t.has_body;
+    return !!String(t.body_text || '').trim();
+  }
+
+  /* what the drawer is SHOWING: a cached body or a non-empty excerpt. has_body is not
+     content - it is a promise that a read can still deliver one. */
+  function displayedContent(t) {
+    return !!String((t && t.excerpt) || '').trim() || !!knownBody(t);
+  }
+
+  function setBody(text, opts) {
+    el.dBody.textContent = text;
+    el.dBody.hidden = false;
+    el.dBody.classList.toggle('is-empty', !!(opts && opts.empty));
+  }
+
+  function bodyNote(text) {
+    if (!el.dBodyNote) return;
+    el.dBodyNote.textContent = text || '';
+    el.dBodyNote.hidden = !text;
+  }
+
+  /* Whatever is known right now: the body, else the excerpt, else an honest placeholder -
+     the loading line while a known body is on its way, the 未抓取 line when nothing is coming.
+     renderBody never blanks the drawer and never guesses about the backend. */
+  function renderBody(t) {
+    const id = t ? Number(t.id) : 0;
+    const failed = bodyFail.has(id);
+    const loading = !failed && bodyPending.has(id);
+    bodyNote(failed ? BODY_FAIL_NOTE : '');
+    const body = knownBody(t);
+    if (body) return setBody(body, { empty: false });
+    if (t && String(t.excerpt || '').trim()) return setBody(t.excerpt, { empty: false });
+    if (loading && topicHasBody(t)) return setBody(LOADING_BODY_COPY, { empty: true });
+    return setBody(EMPTY_BODY_COPY, { empty: true });
+  }
+
+  function redrawBody(id) {
+    const t = S.topics.get(id);
+    if (t) renderBody(t);
+  }
+
+  /* One bounded read per explicit open, and only when the topic really has a body that is
+     not cached yet. A hover/focus preview is a prefetch of the row, never a read, so it does
+     not fetch either. The deadline is the same one /api/state uses and the timer is always
+     cleared, so a retry after a timeout really retries.
+
+     A read already in flight for the CURRENT snapshot is not duplicated: the current explicit
+     visit simply subscribes to it (its visitGen is rebound), which is what lets a close/reopen
+     still mark read when that body arrives. visit.auto and visit.manual are never re-armed or
+     cleared here - a manual 未读 keeps winning. A request left over from a snapshot that has
+     since been replaced is discarded so a fresh visit can ask for the CURRENT data at once. */
+  function ensureBody(t, opts) {
+    if (!t || !opts || !opts.explicit) return;
+    const id = Number(t.id);
+    if (!Number.isFinite(id) || !topicHasBody(t) || knownBody(t)) return;
+
+    const existing = bodyPending.get(id);
+    if (existing && existing.snapshotGen === snapshotGen) {
+      existing.visitGen = visit.gen;           /* subscribe the current visit to this read */
+      return;
+    }
+    if (existing) {                            /* from a snapshot we no longer show */
+      if (existing.controller) existing.controller.abort();
+      window.clearTimeout(existing.timer);
+      bodyPending.delete(id);
+    }
+
+    const controller = (typeof AbortController === 'function') ? new AbortController() : null;
+    const req = { snapshotGen: snapshotGen, visitGen: visit.gen, controller: controller, timer: 0 };
+    req.timer = window.setTimeout(() => { if (controller) controller.abort(); }, READ_DEADLINE);
+    bodyPending.set(id, req);
+    bodyFail.delete(id);                       /* a real retry is loading, not failed */
+    if (S.openId === id) renderBody(t);        /* the honest loading line, not 正文未抓取 */
+    fetch(api(CFG.topic + id), { cache: 'no-store', signal: controller ? controller.signal : undefined })
+      .then((res) => {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
+      .then((data) => {
+        if (!ownsSlot(id, req)) return;        /* replaced or stale snapshot: never touch it */
+        const text = (data && typeof data.body_text === 'string') ? data.body_text : '';
+        if (!text) {
+          /* the list said there is a body and the read says otherwise: stop promising one */
+          const cur = S.topics.get(id);
+          if (cur) cur.has_body = false;
+          if (S.openId === id) redrawBody(id);
+          return;
+        }
+        cacheBody(id, text);
+        bodyFail.delete(id);
+        if (S.openId !== id) return;           /* another topic is on screen: leave it alone */
+        redrawBody(id);                        /* the body is displayed now */
+        markReadOnBodyShown(id, req);
+      })
+      .catch(() => {
+        if (!ownsSlot(id, req)) return;        /* a replacement owns the slot: not our failure */
+        bodyFail.add(id);
+        if (S.openId === id) renderBody(S.topics.get(id));   /* keep the excerpt, add the note */
+      })
+      .finally(() => {
+        window.clearTimeout(req.timer);        /* always release our own deadline timer */
+        if (!ownsSlot(id, req)) return;        /* do not clear or redraw a replacement's slot */
+        bodyPending.delete(id);
+        /* Whatever happened, the drawer must stop claiming a read is in flight: a dropped
+           (stale) or failed answered read falls back to the honest placeholder. */
+        if (S.openId === id) renderBody(S.topics.get(id));
+      });
+  }
+
+  /* A callback may only act while it still owns the topic's slot AND its slot still belongs to
+     the snapshot on screen. */
+  function ownsSlot(id, req) {
+    return bodyPending.get(id) === req && req.snapshotGen === snapshotGen;
+  }
+
+  /* The automatic mark a body-only topic earns: only for the visit that subscribed to this
+     request, only while that visit is the pinned, explicit one on screen, only once, and never
+     after the reader took over with a manual toggle. */
+  function markReadOnBodyShown(id, req) {
+    if (!visit.auto || visit.manual) return;
+    if (!S.pinned || S.openId !== id || visit.gen !== req.visitGen) return;
+    const t = S.topics.get(id);
+    if (!t || !String(knownBody(t) || '').trim()) return;    /* nothing displayed yet */
+    visit.auto = false;
+    markRead(id, true);
+  }
+
   function fillDrawer(t) {
     if (!t) return;
     el.dState.textContent = '预览 · ' + (STATE_LABEL[t.state] || t.state);
@@ -918,20 +1139,9 @@
       el.dFilter.hidden = true;
     }
 
-    if (t.body_text) {
-      el.dBody.textContent = t.body_text;
-      el.dBody.hidden = false;
-      el.dBody.classList.remove('is-empty');
-    } else if (t.excerpt) {
-      el.dBody.textContent = t.excerpt;
-      el.dBody.hidden = false;
-      el.dBody.classList.remove('is-empty');
-    } else {
-      /* true of most live topics: the detail fetch never landed */
-      el.dBody.textContent = '正文未抓取。可以点原文链接查看。';
-      el.dBody.hidden = false;
-      el.dBody.classList.add('is-empty');
-    }
+    /* the body if it is cached, else the excerpt, else the existing notice; ensureBody()
+       fills it in once an explicit open has asked for it */
+    renderBody(t);
 
     el.dLink.href = t.url;
     el.dLink.setAttribute('aria-label', '在新标签打开原文：' + t.title);
@@ -981,25 +1191,32 @@
     });
   }
 
-  /* The settled read trigger. An explicit open - click, tap, keyboard activation or the
-     ?open= dev deep link - marks the topic read once the preview really shows content.
-     A hover/focus preview is only a prefetch and never marks anything, and a preview
-     with no body at all waits for the original link. Re-opening the topic the drawer
-     already shows does NOT mark again: that would undo a manual 未读 toggle. Only moving
-     to another topic (an explicit navigation change) marks again. */
-  function drawerHasContent(t) {
-    return !!String((t && t.body_text) || '').trim() || !!String((t && t.excerpt) || '').trim();
-  }
+  /* The settled read trigger, corrected for the body split. An explicit open - click, tap,
+     keyboard activation or the ?open= dev deep link - marks the topic read as soon as the
+     preview SHOWS content: a non-empty excerpt or a cached body. `has_body` on its own is not
+     content, so a body-only topic stays unread while its body loads and if that read fails,
+     and only becomes read once the body is really displayed during the current explicit visit.
+     A hover/focus preview never marks and never fetches.
 
-  function markReadOnOpen(t, opts) {
+     Re-opening the topic the drawer already shows does NOT arm the mark again, closing the
+     drawer or switching topic cancels a pending mark, and a manual 已读/未读 toggle cancels it
+     for the rest of that visit. */
+  function beginVisitMark(t, opts) {
     if (!opts || !opts.explicit) return;
-    if (!drawerHasContent(t)) return;
-    markRead(t.id, true);
+    const id = Number(t.id);
+    bodyFail.delete(id);              /* a new explicit visit retries a read that failed */
+    if (displayedContent(t)) { markRead(id, true); return; }
+    if (topicHasBody(t)) visit.auto = true;
   }
 
   function openDrawer(id, opts) {
     const t = S.topics.get(id);
     if (!t) return;
+    /* A pinned preview is the reader's explicit choice: a passive preview (the 250 ms hover
+       timer, a keyboard focus, a re-entry after the pointer left) may neither replace it nor
+       clear the pin. Only an explicit activation, the close control, Escape or a genuine
+       outside click ends it. */
+    if (S.pinned && !(opts && opts.explicit)) return;
     const wasOpen = S.openId;
     const wasCommitted = wasOpen === id && S.pinned;  /* same topic, already explicitly open */
     if (wasOpen && wasOpen !== id) unmarkCurrent(wasOpen);
@@ -1007,8 +1224,17 @@
     S.pinned = !!(opts && opts.pinned);
     if (opts && opts.trigger) S.lastTrigger = opts.trigger;
 
+    /* Only a genuinely new visit resets the read intent. Re-opening the topic the drawer
+       already pins must keep the pending automatic mark alive AND keep a manual 未读 applied. */
+    if (!wasCommitted) {
+      visit.gen += 1;            /* a new visit: completions from an earlier one are stale */
+      visit.auto = false;
+      visit.manual = false;
+    }
+
     fillDrawer(t);
-    if (!wasCommitted) markReadOnOpen(t, opts);
+    if (!wasCommitted) beginVisitMark(t, opts);
+    ensureBody(t, opts);
 
     itemNodes(id).forEach((node) => {
       node.classList.add('is-current');
@@ -1036,6 +1262,13 @@
     if (id) unmarkCurrent(id);
     S.openId = null;
     S.pinned = false;
+    visit.gen += 1;      /* a pending automatic mark dies with the drawer */
+    visit.auto = false;
+    visit.manual = true;
+    /* No timer of the closed preview may reopen it (a hover that was still pending) or close
+       whatever comes next (a close that was still pending). */
+    window.clearTimeout(hoverTimer);
+    window.clearTimeout(closeTimer);
     el.drawer.classList.remove('is-open');
     const finish = () => { el.drawer.hidden = true; syncScrim(); };
     syncScrim();
@@ -1045,7 +1278,11 @@
       hideTimer = window.setTimeout(finish, CFG.animMs + 40);
     }
     if (restoreFocus && S.lastTrigger && document.contains(S.lastTrigger)) {
+      /* The returned focus is a restoration, not a fresh keyboard preview: the focus event
+         fires synchronously inside focus(), so the flag is held for exactly this call. */
+      restoringFocus = true;
       try { S.lastTrigger.focus({ preventScroll: true }); } catch (err) { /* noop */ }
+      finally { restoringFocus = false; }
     }
   }
 
@@ -1260,7 +1497,20 @@
 
   /* ---------------------------------------------------------------- events */
 
+  /* The one activation path, for every column and every input: a click/tap or Enter/Space on a
+     row opens the preview on that topic and PINS it. It never writes: 收藏/取消收藏 belongs to
+     the drawer button only, in 精选 exactly as everywhere else. */
+  function activateTopic(node) {
+    const t = S.topics.get(Number(node.dataset.id));
+    if (!t) return;
+    /* an explicit activation beats every pending passive timer */
+    window.clearTimeout(hoverTimer);
+    window.clearTimeout(closeTimer);
+    openDrawer(t.id, { pinned: true, explicit: true, trigger: node });
+  }
+
   el.board.addEventListener('mouseover', (ev) => {
+    if (S.pinned) return;            /* a pinned preview owns the drawer: no passive rival */
     const node = ev.target.closest ? ev.target.closest('.item') : null;
     if (!node) return;
     const from = ev.relatedTarget && ev.relatedTarget.closest ? ev.relatedTarget.closest('.item') : null;
@@ -1276,14 +1526,16 @@
     const to = ev.relatedTarget && ev.relatedTarget.closest ? ev.relatedTarget.closest('.item') : null;
     if (to === node) return;
     window.clearTimeout(hoverTimer);
+    if (S.pinned) return;            /* a pinned preview does not close because the pointer left */
     scheduleClose();
   });
 
   el.board.addEventListener('focusin', (ev) => {
+    if (restoringFocus || S.pinned) return;   /* neither a returned focus nor a rival for a pin */
     const node = ev.target.closest ? ev.target.closest('.item') : null;
     if (!node) return;
-    /* keyboard focus only — a mouse click focuses the item too and would
-       otherwise fight with click-to-queue */
+    /* keyboard focus only — a mouse click focuses the item too, and that click is the
+       activation itself */
     if (lastInput !== 'keyboard' && !node.matches(':focus-visible')) return;
     window.clearTimeout(closeTimer);
     window.clearTimeout(hoverTimer);
@@ -1303,10 +1555,7 @@
   el.board.addEventListener('click', (ev) => {
     const node = ev.target.closest ? ev.target.closest('.item') : null;
     if (!node) return;
-    const t = S.topics.get(Number(node.dataset.id));
-    if (!t) return;
-    if (!isTouchGesture() && nodeCol(node) === 2) toggleQueue(t.id);
-    else openDrawer(t.id, { pinned: true, explicit: true, trigger: node });
+    activateTopic(node);
   });
 
   el.board.addEventListener('keydown', (ev) => {
@@ -1314,10 +1563,7 @@
     const node = ev.target.closest ? ev.target.closest('.item') : null;
     if (!node) return;
     ev.preventDefault();
-    const t = S.topics.get(Number(node.dataset.id));
-    if (!t) return;
-    if (nodeCol(node) === 2) toggleQueue(t.id);
-    else openDrawer(t.id, { pinned: true, explicit: true, trigger: node });
+    activateTopic(node);
   });
 
   document.addEventListener('keydown', (ev) => {
@@ -1328,8 +1574,21 @@
     }
   });
 
+  /* A genuine click elsewhere dismisses the preview - pinned or not. What is NOT "elsewhere":
+     the preview panel itself, the mobile scrim (own handler) and a valid row activation on the
+     board (that click IS the activation). Everything else is outside - blank space, the header
+     and its controls (刷新 / 紧凑 / 管理 / tabs), any inert chrome - and dismisses the preview
+     while still doing its own job. */
+  document.addEventListener('click', (ev) => {
+    if (el.drawer.hidden) return;
+    const target = ev.target;
+    if (!target || !target.closest) return;
+    if (target.closest('.item, .drawer, .drawer-scrim')) return;
+    closeDrawer(false);              /* outside: the reader's focus stays where they clicked */
+  });
+
   el.drawer.addEventListener('mouseenter', () => window.clearTimeout(closeTimer));
-  el.drawer.addEventListener('mouseleave', scheduleClose);
+  el.drawer.addEventListener('mouseleave', () => { if (!S.pinned) scheduleClose(); });
 
   /* mobile: tapping the dimmed area closes the sheet */
   el.scrim.addEventListener('click', () => closeDrawer(true));
@@ -1343,10 +1602,10 @@
   if (el.dSkip) el.dSkip.addEventListener('click', () => { if (S.openId) applyVote(S.openId, 'skip'); });
 
   /* icon-only, reversible, browser-local (never a server write) */
-  if (el.dRead) el.dRead.addEventListener('click', () => { if (S.openId) markRead(S.openId); });
+  if (el.dRead) el.dRead.addEventListener('click', () => { if (S.openId) markRead(S.openId, undefined, true); });
 
   /* opening the original link counts as reading even when no body was fetched */
-  el.dLink.addEventListener('click', () => { if (S.openId) markRead(S.openId, true); });
+  el.dLink.addEventListener('click', () => { if (S.openId) markRead(S.openId, true, true); });
 
   el.density.addEventListener('click', () => {
     const prevRects = captureRects();
