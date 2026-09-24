@@ -40,6 +40,12 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+# The stub must accept exactly the path ids the real handler accepts, so it shares that
+# parser instead of re-implementing the rules (guarded by tests/test_topic_id_contract.py).
+from server import parse_topic_id  # noqa: E402
 PUBLIC = ROOT / "public"
 FIXTURES = PUBLIC / "fixtures"
 CHROMIUM = shutil.which("chromium") or shutil.which("chromium-browser") or "/usr/bin/chromium"
@@ -47,6 +53,15 @@ OWNER_TOKEN = "test-owner-token-browser-check"
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 RESULTS: list[tuple[bool, str]] = []
+
+
+def state_shapes(base: str) -> tuple[dict, dict]:
+    """Both /api/state contracts, read straight from the stub: the legacy default and ?view=list."""
+    shapes = []
+    for suffix in ("", "?view=list"):
+        with urllib.request.urlopen(base + "/api/state" + suffix, timeout=15) as res:
+            shapes.append(json.loads(res.read().decode("utf-8")))
+    return shapes[0], shapes[1]
 
 
 def check(ok: bool, label: str, detail: str = "") -> bool:
@@ -195,6 +210,7 @@ class StubHandler(http.server.SimpleHTTPRequestHandler):
             {
                 "method": method,
                 "path": self.path.split("?")[0],
+                "query": self.path.split("?", 1)[1] if "?" in self.path else "",
                 "origin": headers.get("origin"),
                 "authorization": headers.get("authorization"),
                 "body": None,
@@ -213,6 +229,101 @@ class StubHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    @staticmethod
+    def _state_view(*, include_body: bool) -> dict:
+        """Both /api/state shapes the real server serves (CONTRACT.md §1.1).
+
+        `include_body=True` is the legacy default an older tab still asks for (every row keeps
+        body_text); `include_body=False` is the ?view=list shape the current reader asks for
+        (no body, `has_body` instead). `has_body` is additive on both. The raw fixture in
+        `state` keeps its bodies, so /api/topic/<id> and the POST /api/feedback path keep
+        working on the same data.
+        """
+        state = StubHandler.state["state"]
+        view = dict(state)
+        view["topics"] = [
+            (
+                dict(topic)
+                if include_body
+                else {key: value for key, value in topic.items() if key != "body_text"}
+            )
+            | {"has_body": bool(str(topic.get("body_text") or "").strip())}
+            for topic in state["topics"]
+        ]
+        return view
+
+    @staticmethod
+    def _throttled_body(payload: dict, target: int) -> bytes:
+        """A representative gzipped list payload of at least `target` bytes.
+
+        The fixture list is small, so it is padded with filler rows carrying incompressible
+        text: what goes on the wire is then genuinely ~`target` compressed bytes, which is what
+        the deadline acceptance measures (a padded *uncompressed* payload would not reproduce
+        the incident's wire time).
+        """
+        import base64
+        import gzip
+        import random
+
+        seed = random.Random(20260923)
+        topics = payload.setdefault("topics", [])
+        body = gzip.compress(json.dumps(payload).encode())
+        filler = 0
+        while len(body) < target and filler < 400:
+            blob = base64.b64encode(bytes(seed.randrange(256) for _ in range(3072))).decode()
+            row = dict(topics[0]) if topics else {}
+            row.update(
+                {
+                    "id": 800000000 + filler,
+                    "title": "填充行 %d（用于把列表压到代表性体积）" % filler,
+                    "url": "https://linux.do/t/topic/%d" % (800000000 + filler),
+                    "excerpt": blob,
+                    "has_body": False,
+                    "tags": [],
+                    "filter": {"score": 1},
+                }
+            )
+            topics.append(row)
+            filler += 1
+            body = gzip.compress(json.dumps(payload).encode())
+        return body
+
+    @staticmethod
+    def resolve_topic(raw: str, state: dict) -> tuple[int, dict]:
+        """(status, payload) for one /api/topic/<raw> read, with the handler's id rules.
+
+        Pure and synchronous on purpose: a unit test drives exactly this, and do_GET only adds
+        the injectable failure modes around it.
+        """
+        tid = parse_topic_id(raw)
+        if tid is None:
+            return 404, {"error": "topic not found"}
+        for topic in state["topics"]:
+            if topic.get("id") == tid:
+                body = topic.get("body_text") or ""
+                return 200, StubHandler._topic_view(topic, body)
+        return 404, {"error": "topic not found"}
+
+    @staticmethod
+    def _topic_view(topic: dict, body: str) -> dict:
+        """The GET /api/topic/<id> answer (CONTRACT.md §1.1)."""
+        return {
+            "id": topic.get("id"),
+            "title": topic.get("title") or "",
+            "url": topic.get("url") or "",
+            "body_text": body,
+            "excerpt": topic.get("excerpt") or "",
+            "has_body": bool(body.strip()),
+            "state": topic.get("state"),
+            "filter": topic.get("filter"),
+            "created_at": topic.get("created_at"),
+            "bumped_at": topic.get("bumped_at"),
+            "reply_count": topic.get("reply_count") or 0,
+            "views": topic.get("views") or 0,
+            "category": topic.get("category") or "",
+            "tags": list(topic.get("tags") or []),
+        }
+
     def do_GET(self):
         entry = self._record("GET")
         path = entry["path"]
@@ -225,7 +336,68 @@ class StubHandler(http.server.SimpleHTTPRequestHandler):
             delay = float(state.get("state_delay", 0) or 0)
             if delay:
                 time.sleep(delay)
-            return self._json(200, state["state"])
+            query = self.path.split("?", 1)[1] if "?" in self.path else ""
+            view_params = dict(
+                part.split("=", 1) for part in query.split("&") if "=" in part
+            )
+            payload = self._state_view(include_body=view_params.get("view") != "list")
+            # headers first, body later: the reader's deadline must classify this as a timeout
+            stream_delay = float(state.get("state_stream_delay", 0) or 0)
+            if stream_delay:
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(body)))
+                self.send_header("access-control-allow-origin", "*")
+                self.end_headers()
+                time.sleep(stream_delay)
+                try:
+                    self.wfile.write(body)
+                except OSError:
+                    return          # the reader gave up and closed the socket first
+                return
+            # an acceptance read at the measured HAR rate: the list shape gzipped to a
+            # representative ~347 KB and trickled at ~23.4 KB/s, exactly what the incident
+            # connection did. Real Content-Encoding, real Content-Length, real wire time.
+            bps = float(state.get("state_throttle_bps", 0) or 0)
+            if bps:
+                target = int(state.get("state_throttle_bytes", 0) or 347000)
+                body = self._throttled_body(payload, target)
+                state["throttle_wire_bytes"] = len(body)
+                state["throttle_bps"] = bps
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-encoding", "gzip")
+                self.send_header("content-length", str(len(body)))
+                self.send_header("access-control-allow-origin", "*")
+                self.send_header("vary", "Origin, Accept-Encoding")
+                self.end_headers()
+                sent = 0
+                chunk = max(256, int(bps // 20))          # about 50 ms of wire time per write
+                try:
+                    while sent < len(body):
+                        piece = body[sent : sent + chunk]
+                        self.wfile.write(piece)
+                        self.wfile.flush()
+                        sent += len(piece)
+                        time.sleep(len(piece) / bps)
+                except OSError:
+                    return          # the reader hit its deadline and closed the socket first
+                return
+            return self._json(200, payload)
+        if path.startswith("/api/topic/"):
+            # one body on demand; `topic_status` injects a failed read, `topic_delay` makes every
+            # read slow and `topic_delay_ids` makes only the named topics slow (rapid switching)
+            status = int(state.get("topic_status", 200) or 200)
+            if status != 200:
+                return self._json(status, {"error": "stub failure"})
+            code, payload = self.resolve_topic(path[len("/api/topic/") :], state["state"])
+            if code == 200:
+                per_topic = state.get("topic_delay_ids") or {}
+                delay = per_topic.get(payload["id"], state.get("topic_delay", 0)) or 0
+                if delay:
+                    time.sleep(float(delay))
+            return self._json(code, payload)
         if path == "/health":
             return self._json(200, state["health"])
         if path == "/api/queue":
@@ -498,9 +670,18 @@ def main() -> int:
             before = cdp.evaluate("JSON.parse(localStorage.getItem('linuxdo-ai.queue')||'[]').length")
             aimed, point = mouse_click(cdp, '.item[data-id="%d"]' % target)
             settle(cdp)
+            after_open = cdp.evaluate("JSON.parse(localStorage.getItem('linuxdo-ai.queue')||'[]').length")
+            opened = cdp.evaluate("document.querySelector('#drawer').hidden === false")
+            check(aimed and opened and after_open == before,
+                  "A7 a row click opens the preview and never bookmarks",
+                  f"aimed={aimed} opened={opened} {before}->{after_open} point={point}")
+            check([r for r in StubHandler.requests if r["path"] == "/api/queue"] == [], "A7b no POST for the row click")
+            # the bookmark itself lives on the drawer button only (fixture mode: local)
+            aimed_q, point_q = mouse_click(cdp, "#d-queue")
+            settle(cdp)
             after = cdp.evaluate("JSON.parse(localStorage.getItem('linuxdo-ai.queue')||'[]').length")
-            check(aimed and after == before + 1, "A7 fixture queue toggle stays local",
-                  f"aimed={aimed} {before}->{after} point={point}")
+            check(aimed_q and after == before + 1, "A7c the drawer button still toggles locally",
+                  f"aimed={aimed_q} {before}->{after} point={point_q}")
             check([r for r in StubHandler.requests if r["path"] == "/api/queue"] == [], "A8 no POST for the local toggle")
         else:
             check(False, "A7/A8 could not find a row to toggle")
@@ -525,6 +706,21 @@ def main() -> int:
         open_page(cdp, f"{base}/index.html", width=1280, height=900, mobile=False, touch=False)
         check(cdp.evaluate("window.LINUXDO_AI_DEBUG.apiBase") == "", "B1 same-origin API base")
         check(cdp.evaluate("document.querySelectorAll('.item').length") > 0, "B2 state renders from the API")
+        gets = [r for r in StubHandler.requests if r["path"] == "/api/state" and r["method"] == "GET"]
+        check(
+            bool(gets) and all("view=list" in (r.get("query") or "") for r in gets),
+            "B2b the reader asks for the body-free list view",
+            f"queries={[r.get('query') for r in gets][:3]}",
+        )
+        legacy, listview = state_shapes(base)
+        check(
+            any("body_text" in topic for topic in legacy["topics"])
+            and all("body_text" not in topic and "has_body" in topic for topic in listview["topics"])
+            and any(topic["has_body"] for topic in listview["topics"])
+            and len(json.dumps(legacy)) > len(json.dumps(listview)),
+            "B2c both /api/state contracts are served (a pre-change tab keeps body_text)",
+            f"legacy_bytes={len(json.dumps(legacy))} list_bytes={len(json.dumps(listview))}",
+        )
         check(cdp.evaluate("document.querySelector('#authchip').textContent") == "只读", "B3 unauthenticated page is labelled read-only")
         check(cdp.evaluate("document.querySelector('#authchip').title").find("owner token") >= 0, "B4 read-only chip explains why")
         check(cdp.evaluate("document.querySelector('#refresh').disabled") is True, "B5 refresh disabled without a token")
@@ -534,7 +730,8 @@ def main() -> int:
         cdp.evaluate("document.querySelector('#refresh').click(); true")
         settle(cdp)
         check([r for r in StubHandler.requests if r["method"] == "POST"] == [], "B7 clicking the disabled refresh sends nothing")
-        # a row click in the picked column would queue it: must explain itself instead
+        # a row click in the picked column now opens the preview (and still must not write);
+        # the write control explains the read-only mode when it is pressed
         picked = cdp.evaluate(
             "(function(){var n=document.querySelector('.item--picked');return n?Number(n.dataset.id):0;})()"
         )
@@ -542,10 +739,20 @@ def main() -> int:
             StubHandler.requests.clear()
             aimed, point = mouse_click(cdp, '.item[data-id="%d"]' % picked)
             settle(cdp)
-            status_text = cdp.evaluate("document.querySelector('#opstatus').hidden ? '' : document.querySelector('#opstatus').textContent")
-            check(aimed and "owner token" in (status_text or ""), "B8 row click explains the read-only mode",
-                  f"aimed={aimed} point={point} status={status_text!r}")
+            opens = cdp.evaluate("document.querySelector('#drawer').hidden === false")
+            wins = cdp.evaluate("document.querySelector('#d-title').textContent")
+            check(aimed and opens and wins != "", "B8 a picked row click opens the preview, not a write",
+                  f"aimed={aimed} point={point} drawer_open={opens}")
             check([r for r in StubHandler.requests if r["method"] == "POST"] == [], "B9 no write attempted while read-only")
+            StubHandler.requests.clear()
+            disabled = cdp.evaluate("document.querySelector('#d-queue').disabled")
+            title = cdp.evaluate("document.querySelector('#d-queue').title || ''")
+            aimed2, point2 = mouse_click(cdp, "#d-queue")
+            settle(cdp)
+            check(bool(disabled) and "owner token" in title,
+                  "B9b the 收藏 button is disabled and says why in read-only mode",
+                  f"disabled={disabled} title={title!r} aimed={aimed2} point={point2}")
+            check([r for r in StubHandler.requests if r["method"] == "POST"] == [], "B9c nothing is sent by the refused bookmark")
         else:
             check(False, "B8/B9 no picked row to click")
 
@@ -580,10 +787,16 @@ def main() -> int:
         )
         if picked:
             StubHandler.requests.clear()
-            aimed, point = mouse_click(cdp, '.item[data-id="%d"]' % picked)
+            aimed_row, row_point = mouse_click(cdp, '.item[data-id="%d"]' % picked)
+            settle(cdp)
+            row_writes = [r for r in StubHandler.requests if r["path"] == "/api/queue" and r["method"] == "POST"]
+            check(aimed_row and row_writes == [], "B16b a row click (any column) writes nothing",
+                  f"aimed={aimed_row} point={row_point} writes={json.dumps([r['body'] for r in row_writes])}")
+            StubHandler.requests.clear()
+            aimed, point = mouse_click(cdp, "#d-queue")
             settle(cdp, 1.0)
             queue_posts = [r for r in StubHandler.requests if r["path"] == "/api/queue" and r["method"] == "POST"]
-            check(aimed and len(queue_posts) == 1, "B17 the queue change is one POST",
+            check(aimed and len(queue_posts) == 1, "B17 the drawer button's queue change is one POST",
                   f"aimed={aimed} point={point} posts={json.dumps([r['body'] for r in queue_posts])}")
             body = queue_posts[0]["body"] if queue_posts else None
             check(isinstance(body, dict) and set(body) == {"add"},

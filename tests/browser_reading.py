@@ -364,18 +364,26 @@ def phase_a(cdp, base: str, shots: Path, fixtures: dict) -> None:
         return (in_c3 == 1 and in_c1 == 1 and after_order == before_order and queued == "1"), f"c3={in_c3} c1={in_c1} order_kept={after_order == before_order} count={queued}"
 
     def a4():
-        move = mouse_move(cdp, f'.cell--c2 .item[data-id="{picked_id}"]')
-        if not move:
-            return False, "could not aim at the picked row"
-        time.sleep(0.5)  # hover opens the transient drawer; must not bookmark
-        cdp.call("Input.dispatchMouseEvent", type="mousePressed", x=move["x"], y=move["y"], button="left", buttons=1, clickCount=1, pointerType="mouse")
-        cdp.call("Input.dispatchMouseEvent", type="mouseReleased", x=move["x"], y=move["y"], button="left", buttons=0, clickCount=1, pointerType="mouse")
-        time.sleep(0.6)
+        # An explicit click on the 精选 row opens (and pins) the preview; the bookmark itself is
+        # the drawer's 收藏 button - a row click never books, in any column.
+        if count(cdp, f'.cell--c3 .item[data-id="{picked_id}"]'):
+            return False, "fixture precondition: the picked topic starts unbookmarked"
+        aimed, point = bc.mouse_click(cdp, f'.cell--c2 .item[data-id="{picked_id}"]')
+        time.sleep(0.5)
+        opened = drawer_open(cdp)
+        c3_after_click = count(cdp, f'.cell--c3 .item[data-id="{picked_id}"]')
+        queued_after_click = js(cdp, "document.querySelector('#c-queue').textContent")
+        click_js(cdp, "#d-queue")
         wait_js(cdp, f'document.querySelectorAll(\'.cell--c3 .item[data-id="{picked_id}"]\').length === 1')
         c2 = count(cdp, f'.cell--c2 .item[data-id="{picked_id}"]')
         c3 = count(cdp, f'.cell--c3 .item[data-id="{picked_id}"]')
         queued = js(cdp, "document.querySelector('#c-queue').textContent")
-        return (c2 == 1 and c3 == 1 and queued == "2"), f"picked in c2={c2} c3={c3} count={queued}"
+        return (
+            aimed and opened and c3_after_click == 0 and queued_after_click == "1"
+            and c2 == 1 and c3 == 1 and queued == "2",
+            f"aimed={aimed} opened={opened} c3_after_click={c3_after_click} "
+            f"count_after_click={queued_after_click} c2={c2} c3={c3} count={queued} point={point}",
+        )
 
     def a5():
         before = item_state(cdp, body_id)
@@ -646,11 +654,40 @@ def phase_b(cdp, base: str, fixture_file: dict) -> None:
     run("B6  the 收藏 row still opens the preview and keeps its bookmark", b6)
 
 
+BODY_ONLY_TEXT = "只有正文没有摘要的帖子内容。" * 30
+BODY_ONLY_ID = 900000001
+
+
 def phase_c(cdp, base: str, fixtures: dict, shots: Path) -> None:
     url = f"{base}/index.html"
-    fresh_page(cdp, url, width=1280, height=900)
     rejected_id = fixtures["rejected"][0]
     picked_id = fixtures["picked"][0]
+    body_id = fixtures["pending_with_body"][0]
+
+    # The fixture has no topic that carries a body without an excerpt, and that is the only
+    # shape that proves `has_body` schedules a read without counting as displayed content.
+    # It is added to the stub's raw state (real mode only); the fixture file is untouched.
+    raw = bc.StubHandler.state["state"]
+    if not any(t.get("id") == BODY_ONLY_ID for t in raw["topics"]):
+        sample = dict(fixtures["topics"][0])
+        raw["topics"].append(
+            {
+                "id": BODY_ONLY_ID,
+                "title": "只有正文没有摘要的帖子（测试）",
+                "url": "https://linux.do/t/topic/%d" % BODY_ONLY_ID,
+                "state": "rejected",
+                "created_at": sample.get("created_at"),
+                "bumped_at": sample.get("bumped_at"),
+                "reply_count": 3,
+                "views": 42,
+                "category": sample.get("category"),
+                "tags": sample.get("tags") or [],
+                "excerpt": "",
+                "body_text": BODY_ONLY_TEXT,
+                "filter": {"score": 1, "summary": "只有正文没有摘要。", "decision": "reject"},
+            }
+        )
+    fresh_page(cdp, url, width=1280, height=900)
 
     def c1():
         owner_text = js(cdp, "document.querySelector('#owner').textContent")
@@ -834,7 +871,591 @@ def phase_c(cdp, base: str, fixtures: dict, shots: Path) -> None:
     run("C6  重试 recovers after the failure without a storm", c6)
     run("C7  a slow read is bounded and reports a timeout, not a guess", c7)
     run("C8  overlapping pulls are deduplicated into one read", c8)
+    def c10():
+        # the list payload carries has_body; the body itself arrives from /api/topic/<id>
+        cc = bc.StubHandler
+        cc.state["topic_status"] = 200
+        cc.requests.clear()
+        fresh_page(cdp, url, width=1280, height=900, settle_s=2.2)
+        expected = fixtures["body_text_of"][body_id]
+        if not expected:
+            return False, "fixture precondition: the topic has no body"
+        listed = [r for r in cc.requests if r["path"] == "/api/state"]
+        open_drawer_js(cdp, f'.cell--c1 .item[data-id="{body_id}"]')
+        if not drawer_visible_after(cdp, body_id):
+            return False, "drawer did not open for the body topic"
+        matched = wait_js(
+            cdp,
+            "(function(){var b=document.querySelector('#d-body');return !!(b && b.textContent === %s);})()" % json.dumps(expected),
+            timeout=6.0,
+        )
+        shown = js(cdp, "document.querySelector('#d-body').textContent")
+        empty = js(cdp, "document.querySelector('#d-body').classList.contains('is-empty')")
+        note_hidden = js(cdp, "document.querySelector('#d-bodynote').hidden")
+        first = [r["path"] for r in cc.requests if r["path"].startswith("/api/topic/")]
+        # re-opening the same topic draws on the cache: no second body read
+        close_drawer(cdp)
+        open_drawer_js(cdp, f'.cell--c1 .item[data-id="{body_id}"]')
+        time.sleep(0.8)
+        again = [r["path"] for r in cc.requests if r["path"].startswith("/api/topic/")]
+        return (
+            # fresh_page navigates and then reloads, so /api/state itself is read twice here;
+            # what matters is that the body route is read exactly once and then served from cache
+            bool(matched) and len(first) == 1 and len(again) == 1 and len(listed) >= 1
+            and empty is False and note_hidden is True,
+            f"match={bool(matched)} route_gets={first} after_reopen={len(again)} state_gets={len(listed)} "
+            f"empty={empty} note_hidden={note_hidden} shown={shown[:30]!r}",
+        )
+
+    def c11():
+        # a hover preview is a prefetch of the row: it neither reads nor fetches the body
+        cc = bc.StubHandler
+        cc.requests.clear()
+        fresh_page(cdp, url, width=1280, height=900, settle_s=2.2)
+        before = item_state(cdp, body_id)
+        move = mouse_move(cdp, f'.cell--c1 .item[data-id="{body_id}"]')
+        if not move:
+            return False, "could not aim at the body row"
+        time.sleep(0.8)          # > hoverMs: the preview really opened
+        reads = [r["path"] for r in cc.requests if r["path"].startswith("/api/topic/")]
+        after = item_state(cdp, body_id)
+        shown = js(cdp, "document.querySelector('#d-body').textContent")
+        excerpt = fixtures["excerpt_of"][body_id]
+        return (
+            drawer_open(cdp) and reads == [] and before["read"] == 0 and after["read"] == 0 and shown == excerpt,
+            f"reads={reads} before={before['read']} after={after['read']} excerpt_shown={shown == excerpt} shown={shown[:30]!r}",
+        )
+
+    def c12():
+        # a failed body read keeps the excerpt, adds one truthful line, and still marks read
+        cc = bc.StubHandler
+        cc.state["topic_status"] = 500
+        cc.requests.clear()
+        fresh_page(cdp, url, width=1280, height=900, settle_s=2.2)
+        excerpt = fixtures["excerpt_of"][body_id]
+        open_drawer_js(cdp, f'.cell--c1 .item[data-id="{body_id}"]')
+        if not drawer_visible_after(cdp, body_id):
+            return False, "drawer did not open for the body topic"
+        flagged = wait_js(
+            cdp,
+            "(function(){var n=document.querySelector('#d-bodynote');return !!(n && !n.hidden && n.textContent);})()",
+            timeout=6.0,
+        )
+        shown = js(cdp, "document.querySelector('#d-body').textContent")
+        note = js(cdp, "document.querySelector('#d-bodynote').textContent")
+        reads = [r["path"] for r in cc.requests if r["path"].startswith("/api/topic/")]
+        state = item_state(cdp, body_id)
+        cc.state["topic_status"] = 200
+        return (
+            bool(flagged) and shown == excerpt and len(reads) == 1 and state["read"] >= 1
+            and "重启" not in note and "正文读取失败" in note,
+            f"note={note!r} excerpt_kept={shown == excerpt} reads={len(reads)} read_marked={state['read']}",
+        )
+
+    BODY_ONLY_ROW = f'.cell--c1 .item[data-id="{BODY_ONLY_ID}"]'
+    BODY_ONLY_SHOWN = "(function(){var b=document.querySelector('#d-body');return !!(b && b.textContent.indexOf('只有正文没有摘要的帖子内容') === 0);})()"
+    NOTE_VISIBLE = "(function(){var n=document.querySelector('#d-bodynote');return !!(n && !n.hidden && n.textContent);})()"
+
+    def c13():
+        # the reader asks for the body-free list view; the same stub still answers the legacy read
+        cc = bc.StubHandler
+        cc.requests.clear()
+        fresh_page(cdp, url, width=1280, height=900, settle_s=2.2)
+        gets = [r for r in cc.requests if r["path"] == "/api/state" and r["method"] == "GET"]
+        legacy, listview = bc.state_shapes(base)
+        return (
+            bool(gets) and all("view=list" in (r.get("query") or "") for r in gets)
+            and any("body_text" in t for t in legacy["topics"])
+            and all("body_text" not in t and "has_body" in t for t in listview["topics"])
+            and any(t["has_body"] for t in listview["topics"]),
+            f"queries={[r.get('query') for r in gets][:2]} "
+            f"legacy_body={'body_text' in legacy['topics'][0]} list_body={'body_text' in listview['topics'][0]}",
+        )
+
+    def c14():
+        # a body-only topic stays unread while its body loads, and becomes read once it is shown
+        cc = bc.StubHandler
+        cc.state["topic_delay_ids"] = {BODY_ONLY_ID: 1.8}
+        cc.requests.clear()
+        fresh_page(cdp, url, width=1280, height=900, settle_s=2.2)
+        open_drawer_js(cdp, BODY_ONLY_ROW)
+        if not drawer_visible_after(cdp, BODY_ONLY_ID):
+            cc.state["topic_delay_ids"] = {}
+            return False, "drawer did not open for the body-only topic"
+        time.sleep(0.8)                      # the read is still in flight
+        loading = js(cdp, "document.querySelector('#d-body').textContent")
+        during = item_state(cdp, BODY_ONLY_ID)
+        arrived = wait_js(cdp, BODY_ONLY_SHOWN, timeout=8.0)
+        shown = js(cdp, "document.querySelector('#d-body').textContent")
+        after = item_state(cdp, BODY_ONLY_ID)
+        cc.state["topic_delay_ids"] = {}
+        return (
+            during["read"] == 0 and "正在读取正文" in (loading or "") and bool(arrived)
+            and shown.startswith("只有正文没有摘要的帖子内容") and after["read"] >= 1,
+            f"while_loading={loading[:24]!r} read_during={during['read']} arrived={bool(arrived)} read_after={after['read']}",
+        )
+
+    def c15():
+        # a body-only topic whose read fails stays unread, with an honest line and no stale promise
+        cc = bc.StubHandler
+        cc.state["topic_status"] = 500
+        cc.requests.clear()
+        fresh_page(cdp, url, width=1280, height=900, settle_s=2.2)
+        open_drawer_js(cdp, BODY_ONLY_ROW)
+        if not drawer_visible_after(cdp, BODY_ONLY_ID):
+            cc.state["topic_status"] = 200
+            return False, "drawer did not open for the body-only topic"
+        flagged = wait_js(cdp, NOTE_VISIBLE, timeout=8.0)
+        note = js(cdp, "document.querySelector('#d-bodynote').textContent")
+        shown = js(cdp, "document.querySelector('#d-body').textContent")
+        reads = [r["path"] for r in cc.requests if r["path"].startswith("/api/topic/")]
+        after = item_state(cdp, BODY_ONLY_ID)
+        cc.state["topic_status"] = 200
+        return (
+            bool(flagged) and "正文读取失败" in (note or "") and "重启" not in (note or "")
+            and "正在读取正文" not in (shown or "") and len(reads) == 1 and after["read"] == 0,
+            f"note={note!r} shown={shown[:24]!r} reads={len(reads)} read={after['read']}",
+        )
+
+    def c16():
+        # a manual 未读 while the body is still coming wins: the arriving body must not re-mark it
+        cc = bc.StubHandler
+        cc.state["topic_delay_ids"] = {body_id: 1.8}
+        cc.requests.clear()
+        fresh_page(cdp, url, width=1280, height=900, settle_s=2.2)
+        open_drawer_js(cdp, f'.cell--c1 .item[data-id="{body_id}"]')
+        if not drawer_visible_after(cdp, body_id):
+            cc.state["topic_delay_ids"] = {}
+            return False, "drawer did not open for the body topic"
+        marked = item_state(cdp, body_id)        # the excerpt is shown, so the open marks it
+        click_js(cdp, "#d-read")                 # the reader says 未读 while the body loads
+        time.sleep(0.3)
+        manual = item_state(cdp, body_id)
+        arrived = wait_js(
+            cdp,
+            "(function(){var b=document.querySelector('#d-body');return !!(b && b.textContent === %s);})()"
+            % json.dumps(fixtures["body_text_of"][body_id]),
+            timeout=8.0,
+        )
+        shown = js(cdp, "document.querySelector('#d-body').textContent")
+        after = item_state(cdp, body_id)
+        cc.state["topic_delay_ids"] = {}
+        return (
+            marked["read"] >= 1 and manual["read"] == 0 and bool(arrived) and after["read"] == 0
+            and shown == fixtures["body_text_of"][body_id],
+            f"after_open={marked['read']} after_manual_unread={manual['read']} body_arrived={bool(arrived)} "
+            f"read_after_body={after['read']} body_shown={shown == fixtures['body_text_of'][body_id]}",
+        )
+
+    def c17():
+        # switching topic mid-read: the late answer must not mark or replace the topic on screen
+        cc = bc.StubHandler
+        cc.state["topic_delay_ids"] = {BODY_ONLY_ID: 1.8}
+        cc.requests.clear()
+        fresh_page(cdp, url, width=1280, height=900, settle_s=2.2)
+        open_drawer_js(cdp, BODY_ONLY_ROW)                       # slow, body-only
+        time.sleep(0.2)
+        open_drawer_js(cdp, f'.cell--c1 .item[data-id="{body_id}"]')   # fast, excerpt + body
+        if not drawer_visible_after(cdp, body_id):
+            cc.state["topic_delay_ids"] = {}
+            return False, "the drawer did not follow the switch"
+        settled = wait_js(
+            cdp,
+            "(function(){var b=document.querySelector('#d-body');return !!(b && b.textContent === %s);})()"
+            % json.dumps(fixtures["body_text_of"][body_id]),
+            timeout=8.0,
+        )
+        time.sleep(2.0)              # the slow topic answers AFTER the switch
+        shown = js(cdp, "document.querySelector('#d-body').textContent")
+        reads = sorted(r["path"] for r in cc.requests if r["path"].startswith("/api/topic/"))
+        stale = item_state(cdp, BODY_ONLY_ID)
+        current = item_state(cdp, body_id)
+        cc.state["topic_delay_ids"] = {}
+        return (
+            bool(settled) and shown == fixtures["body_text_of"][body_id] and stale["read"] == 0
+            and current["read"] >= 1 and reads == sorted([f"/api/topic/{body_id}", f"/api/topic/{BODY_ONLY_ID}"]),
+            f"reads={reads} body_kept={shown == fixtures['body_text_of'][body_id]} stale_read={stale['read']} "
+            f"current_read={current['read']}",
+        )
+
+    def c18():
+        # the body read is bounded by the same deadline, and a later visit really retries
+        cc = bc.StubHandler
+        cc.state["topic_delay_ids"] = {BODY_ONLY_ID: 3.0}
+        cc.requests.clear()
+        fresh_page(cdp, url + "?readtimeout=700", width=1280, height=900, settle_s=2.2)
+        open_drawer_js(cdp, BODY_ONLY_ROW)
+        if not drawer_visible_after(cdp, BODY_ONLY_ID):
+            cc.state["topic_delay_ids"] = {}
+            return False, "drawer did not open for the body-only topic"
+        flagged = wait_js(cdp, NOTE_VISIBLE, timeout=8.0)
+        note = js(cdp, "document.querySelector('#d-bodynote').textContent")
+        first = item_state(cdp, BODY_ONLY_ID)
+        cc.state["topic_delay_ids"] = {}          # the next read answers immediately
+        close_drawer(cdp)
+        open_drawer_js(cdp, BODY_ONLY_ROW)
+        arrived = wait_js(cdp, BODY_ONLY_SHOWN, timeout=8.0)
+        after = item_state(cdp, BODY_ONLY_ID)
+        return (
+            bool(flagged) and "正文读取失败" in (note or "") and first["read"] == 0
+            and bool(arrived) and after["read"] >= 1,
+            f"note={note!r} read_after_timeout={first['read']} retry_arrived={bool(arrived)} read_after_retry={after['read']}",
+        )
+
+    def c19():
+        # headers fast, body past the deadline: the reader must report the deadline, not a payload
+        cc = bc.StubHandler
+        cc.state["state_stream_delay"] = 0.0
+        fresh_page(cdp, url + "?readtimeout=700", width=1280, height=900, settle_s=2.2)
+        if not ensure_owner(cdp):
+            return False, "could not re-enter the owner token after the page reset"
+        items = count(cdp, ".item")
+        cc.state["state_stream_delay"] = 3.0      # headers now, body long after the deadline
+        cc.requests.clear()
+        js(cdp, "document.querySelector('#refresh').click()")
+        time.sleep(3.4)
+        error = js(cdp, "document.querySelector('#errorstate').hidden ? '' : document.querySelector('#errordetail').textContent")
+        facts = js(cdp, "(function(){var d=document.querySelector('#errortech');if(!d||d.hidden)return '';d.open=true;return document.querySelector('#errorfacts').textContent;})()")
+        kept = count(cdp, ".item")
+        cc.state["state_stream_delay"] = 0.0
+        return (
+            kept == items and items > 0
+            and "未能读完响应" in (error or "") and "没有响应" not in (error or "")
+            and "超时" in (error or "") and "重启" not in (error or "")
+            and "timeout" in (facts or ""),
+            f"items={items}->{kept} error={error!r} facts={facts!r}",
+        )
+
+    def c20():
+        # an accepted snapshot invalidates a body read that was already in flight.
+        # The 刷新 click is an outside click, so the pinned preview closes with it (settled
+        # outside-click contract); the assertion is that the in-flight read for the OLD
+        # snapshot never displays and never marks, whatever the drawer is doing.
+        cc = bc.StubHandler
+        cc.state["topic_delay_ids"] = {BODY_ONLY_ID: 2.4}
+        cc.requests.clear()
+        fresh_page(cdp, url, width=1280, height=900, settle_s=2.2)
+        if not ensure_owner(cdp):
+            cc.state["topic_delay_ids"] = {}
+            return False, "could not re-enter the owner token"
+        open_drawer_js(cdp, BODY_ONLY_ROW)
+        if not drawer_visible_after(cdp, BODY_ONLY_ID):
+            cc.state["topic_delay_ids"] = {}
+            return False, "drawer did not open for the body-only topic"
+        js(cdp, "document.querySelector('#refresh').click()")    # a new snapshot, body still coming
+        time.sleep(1.0)
+        dismissed = not drawer_open(cdp)
+        arrived = wait_js(cdp, BODY_ONLY_SHOWN, timeout=5.0)      # it must NOT be displayed
+        time.sleep(0.5)
+        shown = js(cdp, "document.querySelector('#d-body').textContent")
+        state = item_state(cdp, BODY_ONLY_ID)
+        cc.state["topic_delay_ids"] = {}
+        return (
+            dismissed and not arrived and state["read"] == 0 and "只有正文没有摘要的帖子内容" not in (shown or ""),
+            f"preview_dismissed={dismissed} stale_body_shown={bool(arrived)} read={state['read']} shown={shown[:24]!r}",
+        )
+
+    def c21():
+        # the body cache stays bounded: the cap evicts the oldest entry, memory stays flat
+        fresh_page(cdp, url, width=1280, height=900, settle_s=2.2)
+        before = js(cdp, "window.LINUXDO_AI_DEBUG.bodyCacheSize()")
+        js(cdp, "(function(){for (var i = 1; i <= 60; i++) window.LINUXDO_AI_DEBUG.bodyCachePut(700000 + i, 'B' + i);})()")
+        size = js(cdp, "window.LINUXDO_AI_DEBUG.bodyCacheSize()")
+        ids = js(cdp, "window.LINUXDO_AI_DEBUG.bodyCacheIds()")
+        return (
+            before == 0 and size == 50 and ids[0] == 700011 and ids[-1] == 700060,
+            f"before={before} after={size} window={ids[0] if ids else None}..{ids[-1] if ids else None}",
+        )
+
+    # ---------------------------------------------------------------- deadline acceptance
+    # The incident HAR captured 275712 body bytes over 11.791 s of receive time: 23383 B/s
+    # (its content-length was 2718951). The compressed list shape is ~347 KB, so a real read of it
+    # takes ~14.8 s on that connection - longer than the old 12 s bound and comfortably inside the
+    # shipped 30 s. Both checks below use the SAME representative payload at the SAME rate; only
+    # the bound differs, and both are timed.
+    THROTTLE_BPS = 23383.3
+    THROTTLE_BYTES = 347000
+
+    def throttle(on: bool):
+        cc = bc.StubHandler
+        cc.state["state_throttle_bps"] = THROTTLE_BPS if on else 0
+        cc.state["state_throttle_bytes"] = THROTTLE_BYTES
+        cc.state["state_delay"] = 0.0
+        cc.state["state_stream_delay"] = 0.0
+        cc.state["throttle_wire_bytes"] = 0
+
+    def c22():
+        # RED side: the old 12 s bound aborts a read that is still progressing
+        throttle(True)
+        start = time.time()
+        open_page(cdp, url + "?readtimeout=12000", width=1280, height=900, settle_s=1.0)
+        failed = wait_js(
+            cdp,
+            "(function(){return document.querySelector('#errorstate').hidden === false;})()",
+            timeout=30.0,
+        )
+        elapsed = time.time() - start
+        error = js(cdp, "document.querySelector('#errordetail').textContent")
+        items = count(cdp, ".item")
+        facts = js(cdp, "(function(){var d=document.querySelector('#errortech');if(!d||d.hidden)return '';d.open=true;return document.querySelector('#errorfacts').textContent;})()")
+        wire = bc.StubHandler.state.get("throttle_wire_bytes")
+        throttle(False)
+        return (
+            bool(failed) and items == 0 and "未能读完响应" in (error or "") and "12" in (error or "")
+            and "timeout" in (facts or "") and 10.0 < elapsed < 27.0,
+            f"elapsed={elapsed:.1f}s bound=12000 wire_bytes={wire} items={items} error={error!r}",
+        )
+
+    def c23():
+        # GREEN side: the shipped 30 s bound reads the same payload to the end, in real time
+        throttle(True)
+        start = time.time()
+        open_page(cdp, url, width=1280, height=900, settle_s=1.0)
+        rendered = wait_js(
+            cdp,
+            "(function(){return document.querySelectorAll('.item').length > 0;})()",
+            timeout=45.0,
+        )
+        elapsed = time.time() - start
+        items = count(cdp, ".item")
+        error_hidden = js(cdp, "document.querySelector('#errorstate').hidden")
+        bound = js(cdp, "window.LINUXDO_AI_DEBUG.readDeadlineMs")
+        wire = bc.StubHandler.state.get("throttle_wire_bytes")
+        throttle(False)
+        rate = (wire / elapsed) if (wire and elapsed) else 0
+        return (
+            bool(rendered) and items > 0 and error_hidden is True and bound == 30000
+            and elapsed > 12.0 and elapsed < 30.0,
+            f"elapsed={elapsed:.1f}s bound={bound} wire_bytes={wire} items={items} "
+            f"error_hidden={error_hidden} effective={rate:.0f} B/s",
+        )
+
     run("C9  the owner token stays out of localStorage and the URL", c9)
+    run("C10 the drawer body arrives from /api/topic/<id>, fetched once and cached", c10)
+    run("C11 a hover preview neither reads nor fetches the body", c11)
+    run("C12 a failed body read keeps the excerpt and adds a truthful note", c12)
+    run("C13 the reader asks for ?view=list and the legacy read still carries bodies", c13)
+    run("C14 a body-only topic reads only once its body is on screen", c14)
+    run("C15 a failed body read leaves a body-only topic unread", c15)
+    run("C16 a manual 未读 during the read survives the arriving body", c16)
+    run("C17 a late body neither marks nor replaces the topic now on screen", c17)
+    run("C18 the body read has a deadline and a later visit retries it", c18)
+    run("C19 a stalled body reads as a deadline, never as a payload", c19)
+    run("C20 an accepted snapshot drops a body read still in flight", c20)
+    run("C21 the body cache evicts oldest first and stays bounded", c21)
+    # ---------------------------------------------------------------- lazy-body races
+    # A close/reopen, a repeated pinned open and an accepted snapshot all arrive while a detail
+    # read is in flight. The request lifecycle must follow the VISIT (object identity), not just
+    # the topic id, or a body lands on a visit that never subscribed to it - or a fresh visit
+    # waits for a request that belongs to a snapshot it no longer shows.
+    RACE_NEW_TEXT = "新的正文内容（刷新后的快照）。" * 20
+    NEW_SHOWN = "(function(){var b=document.querySelector('#d-body');return !!(b && b.textContent.indexOf('新的正文内容') === 0);})()"
+
+    def detail_reads():
+        return [r["path"] for r in bc.StubHandler.requests if r["path"].startswith("/api/topic/")]
+
+    def race_topic():
+        return next(t for t in bc.StubHandler.state["state"]["topics"] if t["id"] == BODY_ONLY_ID)
+
+    def state_gets():
+        return len([r for r in bc.StubHandler.requests if r["path"] == "/api/state" and r["method"] == "GET"])
+
+    def wait_for_snapshot(before: int, timeout: float = 8.0) -> bool:
+        """Barrier: the refresh's pull has been served. A short settle then covers applyState, so
+        the checks below observe a real snapshot boundary instead of racing one."""
+        end = time.time() + timeout
+        while time.time() < end:
+            if state_gets() > before:
+                time.sleep(0.4)
+                return True
+            time.sleep(0.1)
+        return False
+
+    def c24():
+        # race A: close + explicit reopen of the SAME body-only topic while the read is pending
+        cc = bc.StubHandler
+        cc.state["topic_delay_ids"] = {BODY_ONLY_ID: 2.4}
+        cc.requests.clear()
+        fresh_page(cdp, url, width=1280, height=900, settle_s=2.2)
+        open_drawer_js(cdp, BODY_ONLY_ROW)
+        if not drawer_visible_after(cdp, BODY_ONLY_ID):
+            cc.state["topic_delay_ids"] = {}
+            return False, "drawer did not open for the body-only topic"
+        time.sleep(0.5)
+        close_drawer(cdp)
+        open_drawer_js(cdp, BODY_ONLY_ROW)          # explicit reopen, read still pending
+        during = item_state(cdp, BODY_ONLY_ID)
+        arrived = wait_js(cdp, BODY_ONLY_SHOWN, timeout=9.0)
+        after = item_state(cdp, BODY_ONLY_ID)
+        reads = detail_reads()
+        cc.state["topic_delay_ids"] = {}
+        return (
+            len(reads) == 1 and during["read"] == 0 and bool(arrived) and after["read"] >= 1,
+            f"reads={reads} read_before_content={during['read']} arrived={bool(arrived)} read_after={after['read']}",
+        )
+
+    def c25():
+        # race B: the same reopen sequence, but the reader toggled 已读 then 未读 before the answer
+        cc = bc.StubHandler
+        cc.state["topic_delay_ids"] = {BODY_ONLY_ID: 2.4}
+        cc.requests.clear()
+        fresh_page(cdp, url, width=1280, height=900, settle_s=2.2)
+        open_drawer_js(cdp, BODY_ONLY_ROW)
+        if not drawer_visible_after(cdp, BODY_ONLY_ID):
+            cc.state["topic_delay_ids"] = {}
+            return False, "drawer did not open for the body-only topic"
+        click_js(cdp, "#d-read")                    # manual 已读
+        time.sleep(0.2)
+        click_js(cdp, "#d-read")                    # manual 未读 - the reader's last word
+        time.sleep(0.2)
+        manual = item_state(cdp, BODY_ONLY_ID)
+        arrived = wait_js(cdp, BODY_ONLY_SHOWN, timeout=9.0)
+        after = item_state(cdp, BODY_ONLY_ID)
+        shown = js(cdp, "document.querySelector('#d-body').textContent")
+        cc.state["topic_delay_ids"] = {}
+        return (
+            manual["read"] == 0 and bool(arrived) and after["read"] == 0
+            and shown.startswith("只有正文没有摘要的帖子内容"),
+            f"after_manual_unread={manual['read']} arrived={bool(arrived)} read_after={after['read']} "
+            f"body_shown={shown.startswith('只有正文没有摘要的帖子内容')}",
+        )
+
+    def c26():
+        # race C: a repeated explicit open of the topic the drawer already pins, while pending
+        cc = bc.StubHandler
+        cc.state["topic_delay_ids"] = {BODY_ONLY_ID: 2.4}
+        cc.requests.clear()
+        fresh_page(cdp, url, width=1280, height=900, settle_s=2.2)
+        open_drawer_js(cdp, BODY_ONLY_ROW)
+        if not drawer_visible_after(cdp, BODY_ONLY_ID):
+            cc.state["topic_delay_ids"] = {}
+            return False, "drawer did not open for the body-only topic"
+        time.sleep(0.4)
+        open_drawer_js(cdp, BODY_ONLY_ROW)          # same pinned topic again: still one request
+        repeat_reads = len(detail_reads())
+        arrived = wait_js(cdp, BODY_ONLY_SHOWN, timeout=9.0)
+        after = item_state(cdp, BODY_ONLY_ID)
+        reads = detail_reads()
+        cc.state["topic_delay_ids"] = {}
+        return (
+            repeat_reads == 1 and len(reads) == 1 and bool(arrived) and after["read"] >= 1,
+            f"reads_at_repeat={repeat_reads} reads={len(reads)} arrived={bool(arrived)} read_after={after['read']}",
+        )
+
+    def c27():
+        # race C, manual variant: 未读 survives both the repeated open and the arriving body
+        cc = bc.StubHandler
+        cc.state["topic_delay_ids"] = {BODY_ONLY_ID: 2.4}
+        cc.requests.clear()
+        fresh_page(cdp, url, width=1280, height=900, settle_s=2.2)
+        open_drawer_js(cdp, BODY_ONLY_ROW)
+        if not drawer_visible_after(cdp, BODY_ONLY_ID):
+            cc.state["topic_delay_ids"] = {}
+            return False, "drawer did not open for the body-only topic"
+        click_js(cdp, "#d-read")
+        time.sleep(0.2)
+        click_js(cdp, "#d-read")                    # manual 未读
+        time.sleep(0.2)
+        open_drawer_js(cdp, BODY_ONLY_ROW)          # repeated pinned open must not undo it
+        manual = item_state(cdp, BODY_ONLY_ID)
+        arrived = wait_js(cdp, BODY_ONLY_SHOWN, timeout=9.0)
+        after = item_state(cdp, BODY_ONLY_ID)
+        cc.state["topic_delay_ids"] = {}
+        return (
+            manual["read"] == 0 and bool(arrived) and after["read"] == 0 and len(detail_reads()) == 1,
+            f"after_repeat={manual['read']} arrived={bool(arrived)} read_after={after['read']} reads={len(detail_reads())}",
+        )
+
+    def c28():
+        # race D: a refreshed snapshot lands while the old detail read is still pending
+        cc = bc.StubHandler
+        topic = race_topic()
+        original = topic["body_text"]
+        cc.state["topic_delay_ids"] = {BODY_ONLY_ID: 6.0}   # the old read will not answer soon
+        cc.requests.clear()
+        fresh_page(cdp, url, width=1280, height=900, settle_s=2.2)
+        if not ensure_owner(cdp):
+            cc.state["topic_delay_ids"] = {}
+            return False, "could not re-enter the owner token"
+        open_drawer_js(cdp, BODY_ONLY_ROW)                 # read #1, belongs to the old snapshot
+        if not drawer_visible_after(cdp, BODY_ONLY_ID):
+            cc.state["topic_delay_ids"] = {}
+            return False, "drawer did not open for the body-only topic"
+        time.sleep(0.4)
+        topic["body_text"] = RACE_NEW_TEXT                 # local stub data change only
+        gets_before = state_gets()
+        js(cdp, "document.querySelector('#refresh').click()")
+        landed = wait_for_snapshot(gets_before)            # barrier: the new snapshot is in
+        cc.state["topic_delay_ids"] = {}                   # the current-snapshot read answers at once
+        close_drawer(cdp)
+        start = time.time()
+        open_drawer_js(cdp, BODY_ONLY_ROW)                 # must request NOW, not wait for read #1
+        arrived = wait_js(cdp, NEW_SHOWN, timeout=5.0)
+        elapsed = time.time() - start
+        shown = js(cdp, "document.querySelector('#d-body').textContent")
+        reads = detail_reads()
+        state = item_state(cdp, BODY_ONLY_ID)
+        time.sleep(0.6)                                    # the old request would answer about here
+        kept = js(cdp, "document.querySelector('#d-body').textContent")
+        topic["body_text"] = original
+        return (
+            bool(landed) and len(reads) == 2 and bool(arrived) and elapsed < 4.0
+            and shown == RACE_NEW_TEXT and kept == RACE_NEW_TEXT and state["read"] >= 1,
+            f"snapshot_landed={bool(landed)} reads={len(reads)} elapsed={elapsed:.2f}s "
+            f"new_shown={shown == RACE_NEW_TEXT} kept_after_old_pending={kept == RACE_NEW_TEXT} read={state['read']}",
+        )
+
+    def c29():
+        # race D, manual variant, under the settled outside-click contract: the 刷新 click
+        # dismisses the pinned preview, so the visit that carried the manual 未读 ends with it.
+        # The refreshed snapshot is then explicitly re-opened, and the reader's last word is
+        # applied to THAT visit. What this still pins down: the new snapshot's body is fetched
+        # for the current visit (never served by the old in-flight request), the old request
+        # cannot mark or replace anything, and 未读 survives the arriving body.
+        cc = bc.StubHandler
+        topic = next(t for t in cc.state["state"]["topics"] if t["id"] == body_id)
+        original = topic["body_text"]
+        cc.state["topic_delay_ids"] = {body_id: 6.0}
+        cc.requests.clear()
+        fresh_page(cdp, url, width=1280, height=900, settle_s=2.2)
+        if not ensure_owner(cdp):
+            cc.state["topic_delay_ids"] = {}
+            return False, "could not re-enter the owner token"
+        open_drawer_js(cdp, f'.cell--c1 .item[data-id="{body_id}"]')   # read #1: the old snapshot
+        if not drawer_visible_after(cdp, body_id):
+            cc.state["topic_delay_ids"] = {}
+            return False, "drawer did not open for the body topic"
+        topic["body_text"] = RACE_NEW_TEXT
+        gets_before = state_gets()
+        js(cdp, "document.querySelector('#refresh').click()")
+        landed = wait_for_snapshot(gets_before)
+        dismissed = not drawer_open(cdp)
+        cc.state["topic_delay_ids"] = {}          # the current-snapshot read answers at once
+        open_drawer_js(cdp, f'.cell--c1 .item[data-id="{body_id}"]')   # explicit reopen
+        click_js(cdp, "#d-read")                  # the reader's last word, for this visit
+        time.sleep(0.2)
+        manual = item_state(cdp, body_id)
+        arrived = wait_js(cdp, NEW_SHOWN, timeout=5.0)
+        after = item_state(cdp, body_id)
+        shown = js(cdp, "document.querySelector('#d-body').textContent")
+        reads = len(detail_reads())
+        topic["body_text"] = original
+        return (
+            bool(landed) and dismissed and manual["read"] == 0 and bool(arrived)
+            and after["read"] == 0 and shown == RACE_NEW_TEXT and reads == 2,
+            f"snapshot_landed={bool(landed)} preview_dismissed_by_refresh={dismissed} "
+            f"after_manual_unread={manual['read']} arrived={bool(arrived)} read_after={after['read']} "
+            f"new_shown={shown == RACE_NEW_TEXT} reads={reads}",
+        )
+
+    run("C22 acceptance RED: ~347 KB at ~23.4 KB/s fails the old 12 s bound", c22)
+    run("C23 acceptance GREEN: the same payload completes under the shipped 30 s bound", c23)
+    run("C24 race A: a close+reopen while the read is pending still reads once the body lands", c24)
+    run("C25 race B: manual 未读 survives the close+reopen and the arriving body", c25)
+    run("C26 race C: a repeated pinned open is one request and still reads on arrival", c26)
+    run("C27 race C manual: 未读 survives the repeated pinned open and the body", c27)
+    run("C28 race D: a refreshed snapshot request starts now and the old one cannot replace it", c28)
+    run("C29 race D manual: the refreshed snapshot reads for the current visit, 未读 survives its body", c29)
     screenshot(cdp, shots, "reading-desktop-1280-real.png")
 
 
@@ -872,6 +1493,8 @@ def fixture_facts() -> dict:
         "picked": [t["id"] for t in topics if t["state"] == "picked"],
         "pending_with_body": [t["id"] for t in topics if t["state"] == "pending" and (t.get("body_text") or "").strip()],
         "no_body": next(t["id"] for t in topics if not (t.get("body_text") or "").strip()),
+        "body_text_of": {t["id"]: (t.get("body_text") or "") for t in topics},
+        "excerpt_of": {t["id"]: (t.get("excerpt") or "") for t in topics},
     }
 
 

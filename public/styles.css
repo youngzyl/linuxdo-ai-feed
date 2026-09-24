@@ -715,6 +715,13 @@ body {
   white-space: normal;
 }
 
+/* the body read failed: the excerpt stays, this one line says what happened */
+.drawer__bodynote {
+  margin: var(--s2) 0 0;
+  font: 12.5px/1.5 var(--sans);
+  color: var(--dim);
+}
+
 .drawer__actions {
   display: flex;
   flex-wrap: wrap;

@@ -645,13 +645,37 @@ class Store:
         pending = sum(1 for t in topics if t.get("state") == "pending")
         return {"all": len(topics), "picked": picked, "rejected": rejected, "pending": pending, "queue": len(self.data["queue"])}
 
-    def api_payload(self, *, cfg: dict, uptime_s: float) -> dict:
+    @staticmethod
+    def topic_brief(topic: dict, *, include_body: bool = True) -> dict:
+        """One list-row topic for /api/state, always with an added `has_body` flag.
+
+        `include_body=False` is the body-free list shape (?view=list, CONTRACT.md §1.1): the
+        body is why the payload reached 2.7 MB and the list view shows none of it, so it is
+        dropped and fetched per topic from /api/topic/<id>. `include_body=True` (the default)
+        is the legacy shape an older tab still expects - without it, a client built before
+        the split would render every topic as if it had no body.
+
+        Either shape is a fresh copy, never the live dict: a caller must not be able to mutate
+        the stored state, and dropping a key from the original would delete the body itself.
+        """
+        brief = {
+            key: value
+            for key, value in topic.items()
+            if include_body or key != "body_text"
+        }
+        brief["has_body"] = bool(str(topic.get("body_text") or "").strip())
+        return brief
+
+    def api_payload(self, *, cfg: dict, uptime_s: float, include_body: bool = True) -> dict:
         with self.lock:
-            topics = sorted(
-                self.data["topics"].values(),
-                key=lambda t: (t.get("created_at") or "", int(t["id"])),
-                reverse=True,
-            )
+            topics = [
+                self.topic_brief(t, include_body=include_body)
+                for t in sorted(
+                    self.data["topics"].values(),
+                    key=lambda t: (t.get("created_at") or "", int(t["id"])),
+                    reverse=True,
+                )
+            ]
             health = json.loads(json.dumps(self.data["health"]))
             fetched_at = health.get("fetch", {}).get("finished_at")
             filter_meta = health.get("filter", {})

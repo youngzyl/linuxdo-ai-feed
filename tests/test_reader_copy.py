@@ -120,6 +120,15 @@ class ReaderCopy(unittest.TestCase):
         self.assertIn("超时", self.js)
         self.assertIn("HTTP", self.js)
 
+    def test_read_deadline_is_the_measured_30s_and_names_the_read_not_the_server(self):
+        # 23383 B/s measured on the incident connection puts the ~347 KB list read at ~14.8 s,
+        # so the shipped bound is 30 s; the copy must blame the unfinished read, not a silent
+        # server, and the dev override stays for deterministic tests
+        self.assertIn("readDeadlineMs: 30000", self.js)
+        self.assertIn("秒内未能读完响应", self.js)
+        self.assertNotIn("秒内没有响应", self.js)
+        self.assertIn("?readtimeout=", (ROOT / "CONTRACT.md").read_text(encoding="utf-8"))
+
     def test_error_state_shows_collapsed_safe_technical_facts(self):
         # collapsed by default, and built only from safe values: category, the fixed trusted
         # endpoint path, the client clock, the last successful read
