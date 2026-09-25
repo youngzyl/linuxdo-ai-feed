@@ -321,3 +321,28 @@ panel, with four safe lines and nothing more: the category (`timeout` / `http <s
 (ISO 8601, `Z`) and the last successful read time (`—` when there has not been one). It never
 contains a full URL or query string, headers, tokens or response bodies, and it is never sent
 anywhere — there is no telemetry endpoint. The user's browser clock is the only clock involved.
+
+## U07 — density toggle keeps the reading position
+
+`紧凑 / 间隙` (the masthead density control) reflows the same board between the packed stacks and
+the chronological grid, and it must keep the reader where they were:
+
+- The reading position is an in-memory `{id, column, viewport top}` triple, never a DOM reference
+  (a bookmark redraw or a density re-render replaces the DOM and must not detach it). It is
+  recorded on an explicit open (click / Enter / Space) from the originating column, or by the
+  passive debounced viewport sample of the last genuinely browsed column.
+- While the masthead is on screen the sample freezes: returning to the header for the density
+  control does not overwrite the remembered article with the first article at the page top.
+- The toggle resolves that triple BEFORE re-rendering, re-renders without FLIP item motion and
+  compensates synchronously; a settled deliberate scroll deeper in the list may advance it first.
+- It is never persisted, never restored across a refresh, never a request destination, and never
+  mutates the read set, bookmarks, votes or preference storage.
+- Desktop only: mobile list geometry does not change with density, so nothing is compensated and
+  no jump is added.
+
+Legacy-capability fallback (click-only): the passive preview resumes on a genuine mouse movement only
+in engines that type their pointer input — `PointerEvent`, a `pointermove` whose `pointerType` is
+`"mouse"`. Where that typing is unavailable there is no reliable way to tell a mouse from a finger, so
+the guard a density reflow leaves stands, and the preview resumes on the next explicit activation
+(click / tap / Enter / Space) rather than on movement. No touch heuristics, cooldowns or storage are
+involved, and explicit activation behaves identically to the modern path.
