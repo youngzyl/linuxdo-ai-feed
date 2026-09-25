@@ -81,8 +81,34 @@ class TestBundleContents(BuildCase):
     def test_index_loads_runtime_config_before_app(self):
         build_pages.build(API_BASE, self.out)
         html = (self.out / "index.html").read_text(encoding="utf-8")
-        self.assertIn('src="runtime-config.js"', html)
-        self.assertLess(html.index("runtime-config.js"), html.index('src="app.js"'))
+        self.assertIn('src="runtime-config.js?v=20260925-8444"', html)
+        self.assertIn('src="app.js?v=20260925-8444"', html)
+        self.assertLess(html.index("runtime-config.js"), html.index('src="app.js'))
+
+    def test_optional_read_namespace_preserves_old_key_without_changing_api(self):
+        new = "https://tcstw.youngzyl.me:8444/linuxdo-api"
+        manifest = build_pages.build(new, self.out, read_state_namespace=API_BASE)
+        config = (self.out / "runtime-config.js").read_text()
+        payload = json.loads(config.split("window.LINUXDO_AI_RUNTIME =", 1)[1].strip().rstrip(";"))
+        self.assertEqual(payload, {"apiBase": new, "readStateNamespace": API_BASE})
+        self.assertEqual(manifest["api_base"], new)
+
+    def test_cli_accepts_optional_namespace(self):
+        import subprocess
+        new = "https://tcstw.youngzyl.me:8444/linuxdo-api"
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "scripts/build_pages.py"), "--api-base", new,
+             "--read-state-namespace", API_BASE, "--out", str(self.out), "--quiet"],
+            capture_output=True, text=True, check=True,
+        )
+        self.assertEqual(json.loads(result.stdout)["api_base"], new)
+        self.assertIn('"readStateNamespace": "' + API_BASE + '"', (self.out / "runtime-config.js").read_text())
+
+    def test_invalid_optional_namespace_refuses_before_writing(self):
+        for bad in ("http://other.example/api", "https://x.test/api?evil=1", "javascript:alert(1)"):
+            with self.subTest(bad=bad), self.assertRaises(build_pages.BuildError):
+                build_pages.build(API_BASE, self.out, read_state_namespace=bad)
+        self.assertFalse(self.out.exists())
 
     def test_static_assets_are_byte_identical_to_the_sources(self):
         build_pages.build(API_BASE, self.out)

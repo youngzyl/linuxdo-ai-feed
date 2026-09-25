@@ -108,7 +108,8 @@ class ReaderCopy(unittest.TestCase):
     def test_read_state_is_browser_local_and_namespaced(self):
         self.assertIn("linuxdo-ai.read", self.js)
         self.assertIn("localStorage", self.js)
-        self.assertRegex(self.js, r"API_BASE\s*\|\|\s*location\.origin")
+        self.assertRegex(self.js, r"READ_STATE_NAMESPACE\s*\|\|\s*location\.origin")
+        self.assertIn("apiBaseFrom(RUNTIME.readStateNamespace) || API_BASE", self.js)
         self.assertNotIn("sessionStorage.setItem(CFG.lsRead", self.js)
 
     def test_owner_token_stays_in_session_storage(self):

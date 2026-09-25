@@ -72,7 +72,13 @@ Local evidence: `/tmp/pages-batch-evidence/`, `/tmp/linuxdo-live-browser-zdz3ju_
 
 Build into a fresh directory outside the repository, for example:
 
-`python3 scripts/build_pages.py --api-base https://tcstw.youngzyl.me:8443/linuxdo-api --out /tmp/linuxdo-pages-next`
+`python3 scripts/build_pages.py --api-base https://tcstw.youngzyl.me:8444/linuxdo-api --read-state-namespace https://tcstw.youngzyl.me:8443/linuxdo-api --out /tmp/linuxdo-pages-next`
+
+### 8444 reader candidate (not yet published)
+
+The historical 8443 deployment and Pages release above remain the recorded live reader state until an actual Pages publication/readback. A dedicated Caddy listener now serves `https://tcstw.youngzyl.me:8444/linuxdo-api`, forwarding to the unchanged loopback backend at `127.0.0.1:8791`. The new TCP/UDP listener passed strict-TLS read-only probes: HTTP/1.1, HTTP/2 and HTTP/3 each returned 200 JSON with the Pages CORS grant for health, `state?view=list` and queue (9/9). Evidence: `/workspace/linuxdo-port8444-infra/{deploy-result.json,protocol-results.json}`. The existing Hysteria forwarding rule `port=8443:proto=udp:toport=443:toaddr=` was not modified; do not repurpose that UDP port for the reader.
+
+The candidate build selects 8444 solely for requests. Its optional, build-validated `readStateNamespace` retains the prior 8443 browser-local read key (`linuxdo-ai.read:<old API base>`), including manual unread choices, without migrating or merging localStorage. When omitted, deployments keep their previous API-base (or same-origin) isolation. Neither value is read from a query parameter or localStorage; the namespace is not a network endpoint. Both runtime-config.js and app.js references are versioned to avoid mixing old and new cached scripts. `deploy/active-target.json` and the watchdog prompt describe the intended 8444 monitoring target, not proof that Pages was updated. Publish and verify public asset hashes plus a real reader read-only smoke before marking this cutover live.
 
 The only publishable entries are `index.html`, `app.js`, `styles.css`, `runtime-config.js`, `.nojekyll`. A reused output directory with extra files, directories or symlinks is rejected before writing. Never publish the repository root, fixtures, production state, logs or credentials.
 

@@ -1,0 +1,7 @@
+# Reader transport: HTTP/3 port conflict and isolated 8444 listener
+
+This is separate from the September 23 incomplete-body/timeout incident in `reader-api-incident.md`. The old reader API shared port 8443 with an existing Hysteria UDP forward to 443. An HTTP/3/QUIC reader attempt on UDP 8443 therefore cannot be treated as an ordinary Caddy reader request. This transport conflict does not prove the cause of every user-reported NetworkError or fix the earlier slow-body transfer.
+
+The bounded alternative is a dedicated Caddy TCP+UDP listener at 8444 for `/linuxdo-api/*`, forwarding to the existing `127.0.0.1:8791` backend. Infrastructure evidence records preserved Caddyfile inode and unchanged NAT and UDP 443 listener; the existing firewalld rule `port=8443:proto=udp:toport=443:toaddr=` stays exactly as it was. Strict-TLS protocol probes at 8444 passed 9/9 read-only cases (H1/H2/H3 × health/state list/queue), each 200 JSON with expected Pages CORS. Evidence is outside this repo: `/workspace/linuxdo-port8444-infra/deploy-result.json` and `/workspace/linuxdo-port8444-infra/protocol-results.json`.
+
+The static reader cutover to 8444 is a **candidate**, not a claim that GitHub Pages has been published or that the user's own network has recovered. The prior 8443 local read-state key is retained by an optional trusted build value; it does not send requests to 8443 or touch production feedback/queue state.

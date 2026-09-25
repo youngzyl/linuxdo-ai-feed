@@ -62,6 +62,8 @@
   }
   const RUNTIME = (typeof window !== 'undefined' && window.LINUXDO_AI_RUNTIME) || {};
   const API_BASE = apiBaseFrom(RUNTIME.apiBase);
+  /* A trusted build-time storage-key override only. Never use it in api(path). */
+  const READ_STATE_NAMESPACE = apiBaseFrom(RUNTIME.readStateNamespace) || API_BASE;
   const api = (path) => API_BASE + path;
 
   const params = new URLSearchParams(location.search);
@@ -241,11 +243,12 @@
   /* --------------------------------------------------------------- read state */
   /* Read state is browser-local on purpose: it is not owner-authenticated, needs no
      server write, survives a reload, and two deployments must not share a reading
-     position - hence the namespace, derived from the trusted apiBase (or the page
-     origin in a same-origin build). It is the one deliberately small-scope choice in
+     position - hence the namespace, normally derived from trusted apiBase (or the page
+     origin in a same-origin build). A build can keep the prior namespace during an API
+     port cutover without copying or merging localStorage. It is the one small-scope choice in
      this contract: another device does not see it. */
   function readKey() {
-    return CFG.lsRead + ':' + (API_BASE || location.origin);
+    return CFG.lsRead + ':' + (READ_STATE_NAMESPACE || location.origin);
   }
 
   function loadRead() {

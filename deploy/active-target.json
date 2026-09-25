@@ -1,7 +1,7 @@
 {
   "frontend_url": "https://youngzyl.github.io/linuxdo-ai-feed/",
-  "api_base": "https://tcstw.youngzyl.me:8443/linuxdo-api",
-  "health_url": "https://tcstw.youngzyl.me:8443/linuxdo-api/health",
+  "api_base": "https://tcstw.youngzyl.me:8444/linuxdo-api",
+  "health_url": "https://tcstw.youngzyl.me:8444/linuxdo-api/health",
   "service_host": "tcstw.youngzyl.me",
   "service_unit": "linuxdo-ai-feed.service",
   "service_path": "/home/young/services/linuxdo-ai"
