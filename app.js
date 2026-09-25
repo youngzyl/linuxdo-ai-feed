@@ -158,13 +158,27 @@
     lastOkAt: null,   /* client ISO time of the last successful state read */
     pinned: false,
     first: true,
-    lastTrigger: null
+    lastTrigger: null,
+    /* U07 — in-memory only, never persisted and never a request destination */
+    anchor: null,        /* {id, col, top}: the reading position to keep across a density toggle */
+    browseCol: 1,        /* the last lane the reader genuinely browsed */
+    laneGen: 0,          /* bumped on every render: the ordered-lane cache is void */
+    laneCache: null,
+    laneCacheGen: -1,
+    selfScrollY: null    /* the scrollY our own density compensation produced (never a reader scroll) */
   };
 
   let hoverTimer = 0;
   let closeTimer = 0;
   let hideTimer = 0;
   let tickTimer = 0;
+  /* Layout-generated hover: a density reflow can move a row under a pointer that did not move, and
+     the browser reports that as a mouseover. While this guard is up such a hover is ignored; only
+     the reader's own movement — pointer coordinates we have not seen before — releases it. An
+     explicit activation never consults it. */
+  let hoverGuard = false;
+  let lastPtrX = -1;
+  let lastPtrY = -1;
   let lastInput = null; /* 'mouse' | 'touch' | 'keyboard' — decides whether a focus is a keyboard one */
   /* True only while closeDrawer hands the focus back to the row the preview came from: the
      focus event that fires synchronously there is a restoration, not a fresh keyboard preview. */
@@ -671,6 +685,241 @@
     return map;
   }
 
+  /* ------------------------------------------- U07: the reading-position anchor
+     An ephemeral {id, col, top} triple of PLAIN values — never DOM references, so a bookmark
+     redraw or a density re-render cannot detach it — and never persisted: a reload starts a new
+     session (no cross-reload resume). It is independent of the read set and of the bookmark or
+     density preference, and it never becomes a request destination. */
+  const ANCHOR_SAMPLE_MS = 140;   /* trailing debounce of the passive viewport sample */
+  const ANCHOR_BAND = 4;          /* how many lane rows the "near the top" probe may inspect */
+  const ANCHOR_MIN_VISIBLE = 24;  /* a sliver at the viewport edge is not the article being read */
+
+  function laneOf(node) {
+    const cell = node && node.closest ? node.closest('.cell--c1, .cell--c2, .cell--c3') : null;
+    if (!cell) return 0;
+    const m = /cell--c(\d)/.exec(cell.className || '');
+    return m ? Number(m[1]) : 0;
+  }
+
+  /* ordered lane nodes, cached per render: a render replaces the DOM, so the cache is void */
+  function laneNodes(col) {
+    if (!S.laneCache || S.laneCacheGen !== S.laneGen) {
+      S.laneCache = new Map();
+      S.laneCacheGen = S.laneGen;
+    }
+    let list = S.laneCache.get(col);
+    if (!list) {
+      list = [];
+      el.board.querySelectorAll('.cell--c' + col + ' > .item').forEach((node) => {
+        list.push({ id: Number(node.dataset.id), node: node });
+      });
+      S.laneCache.set(col, list);
+    }
+    return list;
+  }
+
+  function laneEntry(id, col) {
+    const list = laneNodes(col);
+    for (let i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return null;
+  }
+
+  /* the masthead is not sticky: while it is on screen the reader is travelling to or from the
+     density control, so the sample freezes instead of adopting the article at the page top */
+  function mastheadVisible() {
+    const r = el.density.getBoundingClientRect();
+    return r.bottom > 0 && r.top < window.innerHeight;
+  }
+
+  /* the first article of a lane that is really inside the viewport, found by a bounded binary
+     search over the lane's ordered nodes — a handful of probes, never a per-frame scan of
+     every topic's bounds. Only a truly visible node is returned: a sparse lane can leave the
+     whole viewport blank, and then the answer is null, never an off-screen row. */
+  function firstVisibleNearTop(col) {
+    const list = laneNodes(col);
+    if (!list.length) return null;
+    let lo = 0;
+    let hi = list.length - 1;
+    let found = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (list[mid].node.getBoundingClientRect().bottom > 0) { found = mid; hi = mid - 1; }
+      else lo = mid + 1;
+    }
+    if (found < 0) return null;                    /* nothing of this lane reaches the viewport */
+    for (let i = found; i < Math.min(list.length, found + ANCHOR_BAND); i++) {
+      if (visibleEnough(list[i].node)) return list[i].node;
+    }
+    return null;                                   /* only a sliver (or a gap): not on screen */
+  }
+
+  /* an explicit activation records its originating lane and visible offset BEFORE it opens or
+     rebuilds anything; a bookmark action afterwards keeps that origin instead of moving to
+     column 3, and closing the preview never erases it */
+  function rememberAnchor(node, opts) {
+    if (!node || !S.data || !isDesktop() || !document.contains(node)) return;
+    const col = laneOf(node);
+    if (!col) return;
+    S.anchor = { id: Number(node.dataset.id), col: col, top: node.getBoundingClientRect().top };
+    if (opts && opts.browse) S.browseCol = col;
+  }
+
+  /* "On screen" is ONE rule everywhere: the height of the row's intersection with the viewport,
+     which must reach ANCHOR_MIN_VISIBLE px or the row's own height, whichever is smaller (a short
+     row counts when it really is fully visible). The old asymmetric test
+     (bottom > ANCHOR_MIN_VISIBLE && top < innerHeight - 1) accepted a ~2 px sliver at the edge. */
+  function visibleEnough(node) {
+    if (!node || !document.contains(node)) return false;
+    const r = node.getBoundingClientRect();
+    if (r.height <= 0) return false;
+    const inter = Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0);
+    return inter >= Math.min(ANCHOR_MIN_VISIBLE, r.height);
+  }
+
+  /* Passive browsing: keep the explicit article while it is visible (refreshing its remembered
+     offset to where it actually sits now), otherwise take the first article near the viewport top
+     of the last genuinely browsed lane. It never marks read, never opens a preview, never fetches
+     a body and never writes feedback. */
+  function sampleReadingAnchor() {
+    if (!S.data || !isDesktop()) return;
+    /* The density handler scrolls the document itself to keep the reader's article. That scroll is
+       not the reader browsing: this sample ignores it for exactly as long as the position is still
+       the one we produced, and re-arms the moment the position differs — anything the reader did,
+       however soon after the toggle, is therefore never discarded. */
+    const y = Math.round(window.scrollY);
+    if (S.selfScrollY !== null) {
+      if (y === S.selfScrollY) return;
+      S.selfScrollY = null;
+    }
+    if (mastheadVisible()) return;                  /* at the header: frozen, not overwritten */
+    const current = S.anchor ? laneEntry(S.anchor.id, S.anchor.col) : null;
+    if (S.anchor && !current) {
+      /* The remembered pair is gone (its bookmark was removed, the list changed): the question is
+         still about ITS OWN lane. Replace it only with something genuinely visible in that lane;
+         otherwise keep the missing pair and adopt nothing. Taking another lane's article here
+         would make the following toggle restore a cross-lane article — the same-lane rule in
+         densityAnchorPlan would then be too late, because this sample already rewrote the pair. */
+      const same = firstVisibleNearTop(S.anchor.col);
+      if (same) {
+        S.anchor = { id: Number(same.dataset.id), col: laneOf(same) || S.anchor.col,
+                     top: same.getBoundingClientRect().top };
+      }
+      return;
+    }
+    if (current && visibleEnough(current.node)) {
+      S.anchor = { id: S.anchor.id, col: S.anchor.col,
+                   top: current.node.getBoundingClientRect().top };
+      return;
+    }
+    const order = [S.browseCol || 1, 1, 2, 3].filter((v, i, arr) => v && arr.indexOf(v) === i);
+    for (let i = 0; i < order.length; i++) {
+      const node = firstVisibleNearTop(order[i]);
+      if (node) {
+        S.anchor = { id: Number(node.dataset.id), col: laneOf(node) || order[i],
+                     top: node.getBoundingClientRect().top };
+        return;
+      }
+    }
+  }
+
+  /* What the density toggle must keep: the anchor pair plus the offset to keep it at. */
+  function densityAnchorPlan() {
+    if (!S.data || !isDesktop()) return null;
+    const a = S.anchor;
+    if (a) {
+      const entry = laneEntry(a.id, a.col);
+      if (entry) {
+        /* The masthead is on screen, so the reader is at the density control and the sample froze
+           while they travelled there: the remembered offset decides — even when that article is
+           also still visible after the header navigation, because using its current top there
+           would negate the freeze for exactly the near-header articles. Deeper in the list, with
+           the masthead off screen, a genuinely visible article uses its current top and a sliver
+           or an off-screen one keeps the remembered reading offset. */
+        if (mastheadVisible()) return { id: a.id, col: a.col, top: a.top };
+        if (visibleEnough(entry.node)) return { id: a.id, col: a.col,
+                                                top: entry.node.getBoundingClientRect().top };
+        return { id: a.id, col: a.col, top: a.top };
+      }
+      /* The remembered pair is gone (its bookmark was removed, the list changed). Only a visible
+         fallback inside the SAME lane may replace it; if that lane has nothing on screen the
+         toggle forces no scroll at all — never a cross-lane jump into another lane's article or
+         into the same topic's other copy. A brand-new board (no anchor at all) still gets the
+         browsed-lane-first search below. */
+      const alt = firstVisibleNearTop(a.col);
+      if (alt) return { id: Number(alt.dataset.id), col: laneOf(alt) || a.col,
+                        top: alt.getBoundingClientRect().top };
+      return null;
+    }
+    const order = [S.browseCol || 1, 1, 2, 3].filter((v, i, arr) => v && arr.indexOf(v) === i);
+    for (let i = 0; i < order.length; i++) {
+      const node = firstVisibleNearTop(order[i]);
+      if (node) {
+        return { id: Number(node.dataset.id), col: laneOf(node) || order[i],
+                 top: node.getBoundingClientRect().top };
+      }
+    }
+    return null;                                   /* empty board: force no scroll at all */
+  }
+
+  /* Synchronous compensation: measure the untransformed layout once, scroll the delta, keep the
+     pair. Nothing is queued, so a following toggle or a user scroll cannot be fought. */
+  function restoreDensityAnchor(plan) {
+    if (!plan) return false;
+    const entry = laneEntry(plan.id, plan.col);
+    if (!entry) {
+      /* the pair is gone (its bookmark was removed, the list changed): fall back inside the SAME
+         lane — never a surprise jump to the same topic's copy in another lane */
+      const alt = firstVisibleNearTop(plan.col);
+      if (alt) {
+        S.anchor = { id: Number(alt.dataset.id), col: laneOf(alt) || plan.col,
+                     top: Math.max(0, alt.getBoundingClientRect().top) };
+      }
+      return false;
+    }
+    const now = entry.node.getBoundingClientRect().top;
+    const delta = now - plan.top;
+    if (Math.abs(delta) >= 0.5) window.scrollTo(0, Math.max(0, window.scrollY + delta));
+    S.anchor = { id: plan.id, col: plan.col, top: plan.top };
+    return true;
+  }
+
+  /* ------------------------------------------------------------------ the passive hover (F2)
+     A density reflow moves rows under a pointer that did not move, and the browser reports that
+     as a hover — "the row came to the cursor". Such a hover must not open a preview: it can cover
+     the very control the reader is using, and the next click lands on the preview instead. The
+     reflow raises hoverGuard; only the reader's own movement (coordinates we have not seen
+     before) releases it, and a genuine move that finds the pointer already inside a row schedules
+     the usual delayed hover for that row — the mouseover that would have armed it was the
+     layout's and was swallowed. `trigger` is recorded so the preview keeps its existing close
+     semantics. */
+  function schedulePassiveHover(node) {
+    if (!node || S.pinned) return;
+    window.clearTimeout(closeTimer);
+    window.clearTimeout(hoverTimer);
+    hoverTimer = window.setTimeout(() => openDrawer(Number(node.dataset.id), { trigger: node }),
+                                   CFG.hoverMs);
+  }
+
+  /* Real pointer positions only: a keyboard activation's synthetic click reports (0,0), which is
+     not where the physical pointer is, and it emits no movement event at all. Hover resumption is a
+     MOUSE gesture — a finger crossing a row (or resting on it after the density control was tapped)
+     is not the reader hovering, so touch movement may neither release the guard nor arm a preview.
+     A mouse is recognised only when the engine types its input (pointerType), on the pointer stream;
+     nothing here guesses from timing, event shape or the absence of a capability. */
+  function notePointerPosition(ev) {
+    if (ev.pointerType !== 'mouse') return;        /* only a mouse, and only when the engine says so */
+    const x = ev.clientX;
+    const y = ev.clientY;
+    if (!x && !y) return;                          /* the (0,0) sentinel of a synthetic event */
+    const moved = x !== lastPtrX || y !== lastPtrY;
+    lastPtrX = x;
+    lastPtrY = y;
+    if (!hoverGuard || !moved) return;             /* the layout's hover: coordinates unchanged */
+    hoverGuard = false;                            /* the reader moved: hover is theirs again */
+    const node = ev.target && ev.target.closest ? ev.target.closest('.item') : null;
+    if (node) schedulePassiveHover(node);
+  }
+
   /* FLIP primitive — transform/opacity only, delayed by `delay` ms.
      prefers-reduced-motion: no movement at all, an entering item only fades. */
   function animate(node, dx, dy, fade, delay) {
@@ -789,6 +1038,8 @@
       });
     }
     el.board.replaceChildren(frag);
+    S.laneGen += 1;          /* the DOM was replaced: the ordered-lane cache is void */
+    S.laneCache = null;
 
     flipItems(prevRects, newIds);
 
@@ -1506,7 +1757,12 @@
   function activateTopic(node) {
     const t = S.topics.get(Number(node.dataset.id));
     if (!t) return;
-    /* an explicit activation beats every pending passive timer */
+    /* the reading position is recorded from the originating lane BEFORE the preview opens and
+       before any rebuild (a bookmark afterwards does not move it to column 3) */
+    rememberAnchor(node, { browse: true });
+    /* an explicit activation beats every pending passive timer, and the reader is demonstrably
+       interacting with a specific row, so a layout hover block no longer applies */
+    hoverGuard = false;
     window.clearTimeout(hoverTimer);
     window.clearTimeout(closeTimer);
     openDrawer(t.id, { pinned: true, explicit: true, trigger: node });
@@ -1514,13 +1770,12 @@
 
   el.board.addEventListener('mouseover', (ev) => {
     if (S.pinned) return;            /* a pinned preview owns the drawer: no passive rival */
+    if (hoverGuard) return;          /* the row came to the cursor: not a hover the reader made */
     const node = ev.target.closest ? ev.target.closest('.item') : null;
     if (!node) return;
     const from = ev.relatedTarget && ev.relatedTarget.closest ? ev.relatedTarget.closest('.item') : null;
     if (from === node) return;
-    window.clearTimeout(closeTimer);
-    window.clearTimeout(hoverTimer);
-    hoverTimer = window.setTimeout(() => openDrawer(Number(node.dataset.id), { trigger: node }), CFG.hoverMs);
+    schedulePassiveHover(node);
   });
 
   el.board.addEventListener('mouseout', (ev) => {
@@ -1569,6 +1824,47 @@
     activateTopic(node);
   });
 
+  /* U07: the passive viewport sample behind the reading-position anchor. Debounced, bounded
+     (it probes a handful of lane nodes) and inert: it reads geometry and writes only the
+     in-memory anchor — no read mark, no preview, no body fetch, no feedback. */
+  let anchorTimer = 0;
+  window.addEventListener('scroll', () => {
+    window.clearTimeout(anchorTimer);
+    anchorTimer = window.setTimeout(sampleReadingAnchor, ANCHOR_SAMPLE_MS);
+  }, { passive: true });
+
+  /* The last lane the reader genuinely browsed: pointer or keyboard inside the board. A masthead
+     control (刷新 / 紧凑 / 管理) is not browsing, so it never re-targets the sample. */
+  el.board.addEventListener('pointermove', (ev) => {
+    const node = ev.target.closest ? ev.target.closest('.item') : null;
+    const col = laneOf(node);
+    if (col) S.browseCol = col;
+  }, { passive: true });
+
+  el.board.addEventListener('focusin', (ev) => {
+    const node = ev.target.closest ? ev.target.closest('.item') : null;
+    const col = laneOf(node);
+    if (col) S.browseCol = col;
+  });
+
+  /* Real pointer movement releases the layout-hover guard: the coordinates decide, so the reflow's
+     own hover — same coordinates — cannot. One stream only: where PointerEvent exists, pointermove is
+     authoritative and its pointerType tells a mouse from a finger — the compatibility mousemove a
+     touch also produces is deliberately NOT watched, or a finger would resume hover again. Without
+     that typing there is no reliable way to tell a mouse from a finger, so nothing is watched at all
+     and the guard stands until an explicit activation (click / tap / Enter / Space) — the declared
+     click-only fallback for legacy engines, documented in CONTRACT's U07 section. */
+  if (typeof window.PointerEvent === 'function') {
+    document.addEventListener('pointermove', notePointerPosition, { passive: true });
+  }
+
+  /* A deliberate input ends the "that scroll was mine" bookkeeping, so a genuine scroll can never
+     be mistaken for our own compensation — whatever position it lands on. */
+  ['wheel', 'keydown', 'pointerdown', 'touchstart'].forEach((kind) => {
+    document.addEventListener(kind, () => { S.selfScrollY = null; },
+                              { passive: true, capture: true });
+  });
+
   document.addEventListener('keydown', (ev) => {
     lastInput = 'keyboard';
     if (ev.key === 'Escape' && S.openId) {
@@ -1611,12 +1907,46 @@
   el.dLink.addEventListener('click', () => { if (S.openId) markRead(S.openId, true, true); });
 
   el.density.addEventListener('click', () => {
-    const prevRects = captureRects();
+    /* A genuine scroll can outrun the 140 ms trailing sample: the reader's last scroll may still
+       sit inside its debounce window when the toggle arrives, and the plan would then be resolved
+       from an article their own scroll has already pushed off screen. Flush that pending sample
+       synchronously, on the current viewport, before anything is resolved — it still freezes at a
+       visible masthead, still ignores only our own compensated position, still respects the
+       vanished-pair same-lane restriction, and still never marks read, opens a preview, fetches a
+       body or writes feedback. */
+    window.clearTimeout(anchorTimer);
+    anchorTimer = 0;
+    sampleReadingAnchor();
+    /* Resolve what must be kept BEFORE the reflow: the plan is plain {id, col, top} values, so
+       replacing the DOM cannot invalidate it. */
+    const plan = densityAnchorPlan();
     S.density = S.density === 'compact' ? 'gap' : 'compact';
     el.density.setAttribute('aria-pressed', S.density === 'compact' ? 'true' : 'false');
     el.density.title = '空位显示方式：' + (S.density === 'compact' ? '紧凑（空位折叠）' : '间隙（空位保留）');
     try { localStorage.setItem(CFG.lsDensity, S.density); } catch (err) { /* noop */ }
-    render(prevRects, null);
+    /* EVERY density render reflows the board — with or without a remembered pair — and a reflow
+       moves rows under a stationary pointer: nothing passive may be pending across it and the
+       layout's own hover must not open one. The compensation below is the only part that depends
+       on the plan; a null plan keeps it a harmless no-op with no forced scroll. Nothing is
+       queued here. */
+    hoverGuard = true;
+    window.clearTimeout(hoverTimer);
+    window.clearTimeout(closeTimer);
+    /* Keep the reader's article: a density-only reflow skips FLIP, native scroll anchoring is
+       suspended so it cannot add a second correction, and the sampler ignores exactly the scroll
+       position this compensation produces — a reader scroll that lands elsewhere (or any real
+       input) re-arms it immediately. Nothing is queued or delayed. */
+    S.selfScrollY = null;
+    const root = document.documentElement;
+    const prevOverflowAnchor = root.style.overflowAnchor;
+    root.style.overflowAnchor = 'none';
+    try {
+      render(null, null);
+      restoreDensityAnchor(plan);
+    } finally {
+      root.style.overflowAnchor = prevOverflowAnchor;
+    }
+    S.selfScrollY = Math.round(window.scrollY);
   });
 
   el.refresh.addEventListener('click', async () => {
@@ -1863,6 +2193,7 @@
     if (!node) return;
     /* an explicit open: the deep link is a navigation, so it marks read when the
        preview really carries content */
+    rememberAnchor(node, { browse: true });
     openDrawer(OPEN_ID, { pinned: true, explicit: true, trigger: node });
   }
 
