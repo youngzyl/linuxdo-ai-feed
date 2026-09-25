@@ -3,9 +3,9 @@
 ## Live endpoints and ownership
 
 - Reader: https://youngzyl.github.io/linuxdo-ai-feed/
-- API base: https://tcstw.youngzyl.me:8443/linuxdo-api
-- Health: https://tcstw.youngzyl.me:8443/linuxdo-api/health
-- GitHub Pages source: `gh-pages`, `/`, HTTPS enforced. Static release: `a04e16bdbb73c02e22b5dd00431d625be0ccae18`.
+- API base: https://tcstw.youngzyl.me:8444/linuxdo-api
+- Health: https://tcstw.youngzyl.me:8444/linuxdo-api/health
+- GitHub Pages source: `gh-pages`, `/`, HTTPS enforced. Current static release: `0fffb302c2d4009bea56a1a522cb6082af2b8f18` (2026-09-25 cutover; earlier deployment evidence below is historical).
 - Backend: `young@tcstw.youngzyl.me`, `/home/young/services/linuxdo-ai`.
 - User unit: `linuxdo-ai-feed.service`, enabled; user lingering is enabled.
 - Source: `/workspace/linuxdo-ai`, repository `youngzyl/linuxdo-ai-feed`.
@@ -74,11 +74,15 @@ Build into a fresh directory outside the repository, for example:
 
 `python3 scripts/build_pages.py --api-base https://tcstw.youngzyl.me:8444/linuxdo-api --read-state-namespace https://tcstw.youngzyl.me:8443/linuxdo-api --out /tmp/linuxdo-pages-next`
 
-### 8444 reader candidate (not yet published)
+### 8444 reader cutover — published 2026-09-25
 
-The historical 8443 deployment and Pages release above remain the recorded live reader state until an actual Pages publication/readback. A dedicated Caddy listener now serves `https://tcstw.youngzyl.me:8444/linuxdo-api`, forwarding to the unchanged loopback backend at `127.0.0.1:8791`. The new TCP/UDP listener passed strict-TLS read-only probes: HTTP/1.1, HTTP/2 and HTTP/3 each returned 200 JSON with the Pages CORS grant for health, `state?view=list` and queue (9/9). Evidence: `/workspace/linuxdo-port8444-infra/{deploy-result.json,protocol-results.json}`. The existing Hysteria forwarding rule `port=8443:proto=udp:toport=443:toaddr=` was not modified; do not repurpose that UDP port for the reader.
+A dedicated Caddy listener now serves `https://tcstw.youngzyl.me:8444/linuxdo-api`, forwarding to the unchanged loopback backend at `127.0.0.1:8791`. The new TCP/UDP listener passed strict-TLS read-only probes: HTTP/1.1, HTTP/2 and HTTP/3 each returned 200 JSON with the Pages CORS grant for health, `state?view=list` and queue (9/9, repeated at publication). Evidence: `/workspace/linuxdo-port8444-infra/{deploy-result.json,protocol-results.json}`. The existing Hysteria forwarding rule `port=8443:proto=udp:toport=443:toaddr=` was not modified; do not repurpose that UDP port for the reader. Caddy was reloaded with the bind-mounted inode preserved; the backend was not restarted (`NRestarts=0`, start time unchanged). Runtime and permanent firewall rules add only `8444/tcp` and `8444/udp`.
 
-The candidate build selects 8444 solely for requests. Its optional, build-validated `readStateNamespace` retains the prior 8443 browser-local read key (`linuxdo-ai.read:<old API base>`), including manual unread choices, without migrating or merging localStorage. When omitted, deployments keep their previous API-base (or same-origin) isolation. Neither value is read from a query parameter or localStorage; the namespace is not a network endpoint. Both runtime-config.js and app.js references are versioned to avoid mixing old and new cached scripts. `deploy/active-target.json` and the watchdog prompt describe the intended 8444 monitoring target, not proof that Pages was updated. Publish and verify public asset hashes plus a real reader read-only smoke before marking this cutover live.
+The published build selects 8444 solely for requests. Its optional, build-validated `readStateNamespace` retains the prior 8443 browser-local read key (`linuxdo-ai.read:<old API base>`), including manual unread choices, without migrating or merging localStorage. When omitted, deployments keep their previous API-base (or same-origin) isolation. Neither value is read from a query parameter or localStorage; the namespace is not a network endpoint. Both runtime-config.js and app.js references are versioned to avoid mixing old and new cached scripts. The active-target record and actual watchdog prompt use 8444; the installed monitor returned `service=up`, `attention=0`, `stale=0`.
+
+Release: source `d8b4a3f17572ab732fcaf11409fe9fb9a4084061`, Pages `0fffb302c2d4009bea56a1a522cb6082af2b8f18`. Independent review `deleg_28a362ca` passed the exact diff with no security/logic blockers (diff SHA256 `bd7bb7050106c5bb9cc34bd725d1dae2482f5351171426c1b7edce7a9cbe52d1`). Candidate checks: 53 focused unit, 11 namespace browser, 48 reader, 22 pin; reviewer reran 23 build unit and 11 namespace checks. The full Python suite was not rerun for this variant.
+
+Pages reported this exact commit built; public app/index/runtime hashes matched the release manifest. Live desktop/mobile-emulation smoke passed **22/22**, with 9 browser requests (5 API), all GET, all API traffic on8444, no failed requests or console errors. Evidence: `/workspace/linuxdo-api-cutover-release/{manifest.json,review.diff,live-smoke/live-smoke.json}`. This confirms this test route, not every user network; ask the user to reload the reader, not erase their local storage. The separate unpublished `/workspace/linuxdo-port8444-release` variant is superseded and must not be deployed.
 
 The only publishable entries are `index.html`, `app.js`, `styles.css`, `runtime-config.js`, `.nojekyll`. A reused output directory with extra files, directories or symlinks is rejected before writing. Never publish the repository root, fixtures, production state, logs or credentials.
 
