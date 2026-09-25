@@ -5,7 +5,7 @@
 - Reader: https://youngzyl.github.io/linuxdo-ai-feed/
 - API base: https://tcstw.youngzyl.me:8444/linuxdo-api
 - Health: https://tcstw.youngzyl.me:8444/linuxdo-api/health
-- GitHub Pages source: `gh-pages`, `/`, HTTPS enforced. Current static release: `0fffb302c2d4009bea56a1a522cb6082af2b8f18` (2026-09-25 cutover; earlier deployment evidence below is historical).
+- GitHub Pages source: `gh-pages`, `/`, HTTPS enforced. Current static release: `2e73e435c735a621501a72e44f6cb311efe0cdac` (2026-09-26 CST density-position release; [review and live evidence](density-position-release.md)). Earlier deployment evidence below is historical.
 - Backend: `young@tcstw.youngzyl.me`, `/home/young/services/linuxdo-ai`.
 - User unit: `linuxdo-ai-feed.service`, enabled; user lingering is enabled.
 - Source: `/workspace/linuxdo-ai`, repository `youngzyl/linuxdo-ai-feed`.
