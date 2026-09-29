@@ -1,121 +1,129 @@
-# Permanent deployment — 2026-09-22 (CST)
+# Permanent deployment — writer on bwgca (2026-09-29)
 
 ## Live endpoints and ownership
 
 - Reader: https://youngzyl.github.io/linuxdo-ai-feed/
-- API base: https://tcstw.youngzyl.me:8444/linuxdo-api
-- Health: https://tcstw.youngzyl.me:8444/linuxdo-api/health
-- GitHub Pages source: `gh-pages`, `/`, HTTPS enforced. Current static release: `2e73e435c735a621501a72e44f6cb311efe0cdac` (2026-09-26 CST density-position release; [review and live evidence](density-position-release.md)). Earlier deployment evidence below is historical.
-- Backend: `young@tcstw.youngzyl.me`, `/home/young/services/linuxdo-ai`.
-- User unit: `linuxdo-ai-feed.service`, enabled; user lingering is enabled.
-- Source: `/workspace/linuxdo-ai`, repository `youngzyl/linuxdo-ai-feed`.
+- API base: https://bwgca.youngzyl.me:8444/linuxdo-api
+- Health: https://bwgca.youngzyl.me:8444/linuxdo-api/health
+- Compatibility forward, not a second writer: source Caddy on tcstw still answers `https://tcstw.youngzyl.me:8444/linuxdo-api` and the TCP site on `tcstw.youngzyl.me` for `/linuxdo-api/*`, then strict-TLS forwards to `https://bwgca.youngzyl.me:8444` with `Host bwgca.youngzyl.me`. Inode `50376053` was preserved. File sha256 after that change: `f45f47269276eb76a7d691d676ab39ab0e60a0cea6d42ee1c681fcfe2fa7d030`.
+- Source UDP 8443 is still NAT to Hysteria 443 (`port=8443:proto=udp:toport=443:toaddr=`). That rule was not changed. Old 8443 QUIC is not a working reader path. Do not probe or document it as HTTP/3.
+- The string `https://tcstw.youngzyl.me:8443/linuxdo-api` remains only as the browser read-state namespace (a localStorage key). It is not a network endpoint.
+- GitHub Pages source: `gh-pages`. Current static release: `7386e782583eb14af0f01f02690e00363f62a49d`. Parent published this and read the CDN hashes. This documentation pass did not re-fetch CDN bytes. Earlier SHA `2e73e435c735a621501a72e44f6cb311efe0cdac` is historical.
+- Backend: native Docker Compose on `youngzyl@bwgca.youngzyl.me` port 26244. Project `linuxdo-ai`, service `feed`, container `linuxdo-ai-feed-1`. Command `python3 /opt/linuxdo-ai/run.py serve`. Public write gate is open.
+- Image: `linuxdo-ai-feed:tcstw-migration-caf2efe`, id `sha256:a6ea511f74b8e824328465782f89c89b6cc91e745f7238b9e3aeb21654fe4aed`.
+- Source user unit `linuxdo-ai-feed.service` is inactive, MainPID 0, disabled. Data remains on tcstw for rollback. No second writer.
+- Source repo checkout: `/workspace/linuxdo-ai`, repository `youngzyl/linuxdo-ai-feed`. HEAD at the image export: `caf2efeb791be60c1c037e3ea3be0dee28d6049b`.
 
-The backend is independent of the Hermes tool container. The retired local collector and its supervisor were stopped after a final state copy. Its files remain a rollback snapshot, not an active authority. The old temporary Cloudflare tunnel was stopped after the permanent frontend/API became usable. Never revive a second collector against the retired local state.
+The tcstw user-unit, security, and browser sections below are historical. They describe the writer before stamp `20260929T2305Z`. Do not use those paths to operate the current feed.
 
-## Access model
+The backend is independent of the Hermes tool container. The retired local collector and its supervisor were stopped after a final state copy. Its files remain a rollback snapshot, not an active authority. The old temporary Cloudflare tunnel was stopped after the permanent frontend/API became usable. Never revive a second collector against the retired local state. Never revive the tcstw user unit as a writer.
 
-Anonymous visitors can read the feed, previews and queue. Writes (queue, feedback, refresh) and raw feedback/failure reads require the owner bearer token. A missing configured token fails closed. Browser Origin checks are an exact allowlist, not a wildcard. The published page's API base is baked into `runtime-config.js`, never taken from an arbitrary URL query.
+## Current operations (bwgca Compose)
 
-Use the page's **管理** button to enter the owner token. The browser keeps it in `sessionStorage`, not localStorage or the URL. Token location on tcstw:
+Run from `/home/youngzyl/services/linuxdo-ai` as `youngzyl`, with sudo for Docker:
 
-`/home/young/.config/linuxdo-ai/owner-token`
+`sudo -n docker compose -p linuxdo-ai -f /home/youngzyl/services/linuxdo-ai/compose.yaml --env-file /home/youngzyl/services/linuxdo-ai/compose.env`
 
-It is mode `0600` under a `0700` directory. Do not paste its contents into chat, commit it, put it in a URL, or pass it on a curl command line. The deployment tested valid, absent and wrong token cases through authenticated GETs only; production vote/queue/refresh POSTs were not used as tests.
+Pinned SSH known_hosts for this host: `/workspace/tcstw-migration-20260927/bwgca-known_hosts`. Do not disable host-key or TLS checks.
 
-The service reads `/home/young/.config/linuxdo-ai/service.env` (mode `0600`). Relevant nonsecret settings:
+Paths the running feed actually uses:
 
-- `LINUXDO_AI_OWNER_TOKEN_FILE=/home/young/.config/linuxdo-ai/owner-token`
-- `LINUXDO_AI_ALLOWED_ORIGINS=https://youngzyl.github.io,https://tcstw.youngzyl.me:8443`
+- Compose file: `/home/youngzyl/services/linuxdo-ai/compose.yaml` (mode 0600).
+- Compose env: `/home/youngzyl/services/linuxdo-ai/compose.env` (mode 0600). Nonsecret keys: `LINUXDO_UID=1000`, `LINUXDO_GID=1000`, data/logs/token/service.env paths below, `LINUXDO_AI_ALLOWED_ORIGINS=https://youngzyl.github.io,https://tcstw.youngzyl.me:8443`, filter base `https://api.deepseek.com/v1`, model `deepseek-chat`.
+- Data: `/home/youngzyl/services/linuxdo-ai/data` bind-mounted at `/opt/linuxdo-ai/data`. Do not let Compose create the host path.
+- Logs: `/home/youngzyl/services/linuxdo-ai/logs` bind-mounted at `/opt/linuxdo-ai/logs`.
+- Owner token file: `/home/youngzyl/.config/linuxdo-ai/owner-token`, mode 0600, uid 1000. Mounted read-only at `/run/secrets/owner-token`. The process env name is `LINUXDO_AI_OWNER_TOKEN_FILE=/run/secrets/owner-token`.
+- Feed env file: `/home/youngzyl/.config/linuxdo-ai/service.env`, mode 0600, loaded by compose `env_file`. It is not a systemd `EnvironmentFile` anymore.
+- `research.env`: `/home/youngzyl/.config/linuxdo-ai/research.env`, mode 0600. Preserved. Not loaded into the feed env or image.
+- Listen: container port 8791 published only as `127.0.0.1:8791:8791`.
+- Limits in the compose file: read-only rootfs, `no-new-privileges`, `cap_drop: ALL`, mem_limit 256m, cpus 0.5, pids_limit 64, tmpfs `/tmp` 64m, `restart: unless-stopped`, `pull_policy: never`.
+- Public TLS: native Caddy, not the old tcstw `xray_caddy_1` container. Snippet `/etc/caddy/Caddyfile.d/linuxdo-ai-bwgca.caddyfile`. Main file `/etc/caddy/Caddyfile` still does not contain the linuxdo site; it imports `Caddyfile.d`. Current snippet is single `bind 0.0.0.0`, `handle_path /linuxdo-api/*` to `127.0.0.1:8791`, no migration `respond` gate. Native Caddy MainPID stayed 49118 when the gate was removed. Main file sha256 `f643a9cb53d52a23a403961b48b3ebbcb91789b501bd8a6c3fc6459d8cc8641d`. Gate-removed snippet sha256 `fffdbe53fffa75ac9709364df53409e9c3acb8ae8d9ac8a4c7ef706736d78207`.
+- Caddy binary used by the infra helper: `/usr/local/libexec/caddy/caddy-2.9.1-naive`. Validate with that binary and the main Caddyfile before reload. Do not replace the main file by rename.
 
-The migrated filter still uses the previous `deepseek-chat` / `https://api.deepseek.com/v1` configuration. This is not proof that the planned CommandCode research route is available.
+Anonymous visitors can read the feed, previews, and queue. Writes and raw feedback/failure reads require the owner bearer token. A missing configured token fails closed. Browser Origin checks are an exact allowlist. The published page's API base is baked into `runtime-config.js`, never taken from a URL query. The owner token is entered with the page's 管理 button and kept in `sessionStorage`. Do not paste it into chat, commit it, put it in a URL, or pass it on a curl command line.
 
-## Runtime and transport
-
-`deploy/linuxdo-ai-feed.service` is the deployed unit source. It binds the application to loopback and applies `MemoryHigh=160M`, `MemoryMax=256M`, `CPUQuota=50%`, `TasksMax=32`, `NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=strict`, `ProtectHome=read-only`, and write access only to project `data` and `logs`. `UMask=0077` protects new state/log files. No hardening was removed to get the unit running.
-
-The existing root-managed Caddy container `xray_caddy_1` handles HTTPS on 8443. Only `/linuxdo-api/*` was added, stripping that prefix and forwarding to `127.0.0.1:8791`. Existing global port settings and unrelated proxy services were preserved. The pre-existing 443 listener was not replaced. TLS hostname/certificate verification remains enabled.
-
-Caddy configuration:
-
-- Host file: `/root/docker-compose/xray/config/caddy/Caddyfile`
-- Container mount: `/etc/caddy/Caddyfile`
-- Pre-change backup: `/root/docker-compose/xray/config/caddy/Caddyfile.bak-20260921T172323Z`
-
-This is a single-file bind mount: preserve its inode when updating the file, validate, then reload Caddy. Replacing the file by rename can leave the container reading the old inode. Only `8443/tcp` was added to firewalld (runtime and permanent); existing ports/forwarding were retained.
+Quiesced source snapshot: `/home/young/services/linuxdo-ai/cutover-snapshot-20260929T2305Z` (files mode 0400). Target pre-replace backup: `/home/youngzyl/services/linuxdo-ai/cutover-backup-20260929T2305Z`.
 
 ## Watchdog
 
-Existing job `235d5a42aa94` remains on its 20-minute schedule. It was paused during migration, then resumed after the deployed probe returned `source=http`, `service=up`, `attention=0`, `stale=0`.
+Job `235d5a42aa94` is on its 20-minute schedule. It was paused during migration, then resumed after the deployed probe returned `source=http`, `service=up`, `attention=0`, `stale=0`.
 
-- Host wrapper: `~/.hermes/scripts/linuxdo_ai_monitor.py`, copied from `scripts/host_monitor_wrapper.py` and read back byte-for-byte.
-- Canonical deployment record: `deploy/active-target.json`.
-- Mission/authority source: `deploy/watchdog-prompt.txt`.
+- Host wrapper: `~/.hermes/scripts/linuxdo_ai_monitor.py`, copied from `scripts/host_monitor_wrapper.py`.
+- Canonical target: `deploy/active-target.json`. Parent updated this to the bwgca Compose feed. `service_unit` is null. `service_manager` is `docker-compose`. `compose_service` is `feed`.
+- Mission text: `deploy/watchdog-prompt.txt`. Parent updated it. It names the bwgca Compose feed and forbids reviving the tcstw writer.
 
-A configured remote URL is authoritative: probe failure must not fall back to a healthy-looking local snapshot. Invalid target configuration fails visibly. The watchdog diagnoses and proposes changes; automated research tuning is not enabled without approved bounds and an authenticated revisioned endpoint.
+A configured remote URL is authoritative: probe failure must not fall back to a healthy-looking local snapshot. The watchdog diagnoses and proposes changes. Automated research tuning is not enabled.
 
-## Verification evidence
+Parent independently checked `https://bwgca.youngzyl.me:8444/linuxdo-api` health, `/api/state?view=list`, and `/api/queue` over `--http1.1`, `--http2`, and `--http3-only`. All 9 were JSON 200 with Pages CORS. Evidence: `/workspace/tcstw-migration-20260927/bwgca-production-protocols.json`.
 
-- Final Python suite: **208 tests passed** both locally (Python 3.11.15) and in a fresh isolated tcstw tree (Python 3.12.13), including 9 added tests for the final method/auth fix. Remote tests used ephemeral servers and temporary stores, not production state.
-- `node --check public/app.js` and `git diff --check`: passed.
-- Fixture/stub browser suite: **47/47 checks passed**. It uses ephemeral local servers, not the production backend.
-- Real Pages site: index, JS, CSS and runtime config returned 200 and matched the built SHA256 values.
-- Real desktop page rendered 645 topics at the check; real 390×844 touch emulation opened the preview and exposed its original linux.do link. Captured browser traffic contained no write requests and no network failures.
-- Real HTTPS API returned health/state 200, expected Pages ACAO, preflight 204; unauthenticated feedback 401 and disallowed-origin preflight 403.
-- The restarted, fixed backend completed a real cycle: fetched 60, 2 new, judged 2, picked 1. The two existing feedback journal records were unchanged by deployment.
-- Credential-bearing HTTP requests cannot put secrets in curl argv and refuse **all redirects**, including HTTPS downgrade. Public scraping retains its previous transport behavior.
-- Final source review found that POST could reach the GET-only owner failure-log handler without auth. Isolated regression tests reproduced the disclosure, then confirmed POST is rejected with 405 before reading the feed, with declared bodies forcing connection close. GET/HEAD still require owner auth. Final evidence: `/tmp/linuxdo-final-security-evidence/`; the retained production access log had no matching POST requests at the inspection (not proof of complete historical absence).
-- The final fix passed an independent review (44 focused tests), then was deployed during the scheduler's idle window. The restarted unit was active/enabled with `NRestarts=0`; deployed `server.py` SHA256 matched `6fecd95eb6506dc52fb3d9347dac5615575f4fb29008e0687e20deb55ea65b44`. Live GET/HEAD failure-log requests without auth returned 401. The boot cycle completed: fetched 60, 4 new, judged 4, picked 2; queue and explicit feedback were preserved. No production POST was used for this check.
+This documentation round did not verify a live browser. The `browser_use` host module is missing and the fallback Chromium CDP session is closed. Older browser pass counts below are historical. Do not cite them as a new live proof.
 
-Local evidence: `/tmp/pages-batch-evidence/`, `/tmp/linuxdo-live-browser-zdz3ju_u/`. Deployed logs: `/home/young/services/linuxdo-ai/logs/server.log` and the user service journal. Temporary evidence directories are not a permanent archive.
+## Writer cutover — done (stamp 20260929T2305Z)
+
+- Final sync copied 9 files (data 4, logs 2, secrets 3 including `research.env`). `research.env` is preserved and not loaded into the feed env.
+- At stop: topics 4258, queue 30, feedback file lines 5. Owner GET `/api/feedback` returned 4 items. Queue semantic hash `845bae67829772656c707a2db79d1665012df8edfa69fcdb1b10feef1b5f9963` matched on both sides.
+- First target cycle after writer start: fetched 60 (7 new), judged 8, picked 3. topics became 4265. health `last_success_at` `2026-09-29T14:36:57Z`, fetch_ok and filter_ok true.
+- bwgca public gate was then removed. Native Caddy MainPID stayed 49118.
+- Public health/state/queue were 200 on both hostnames at gate-open. Anonymous feedback and anonymous queue POST were 401. Owner GET feedback was 200 with no redirect.
+- No CI/CD change was made in this cutover. Parent owns Pages publication. No commit and no push from the documentation pass.
 
 ## Publishing another static release
 
-Build into a fresh directory outside the repository, for example:
+Build into a fresh directory outside the repository:
 
-`python3 scripts/build_pages.py --api-base https://tcstw.youngzyl.me:8444/linuxdo-api --read-state-namespace https://tcstw.youngzyl.me:8443/linuxdo-api --out /tmp/linuxdo-pages-next`
+`python3 scripts/build_pages.py --api-base https://bwgca.youngzyl.me:8444/linuxdo-api --read-state-namespace https://tcstw.youngzyl.me:8443/linuxdo-api --out /tmp/linuxdo-pages-next`
 
-### 8444 reader cutover — published 2026-09-25
+The read-state namespace is a localStorage key. It must stay the old 8443 string so existing unread choices survive. It must not be used as a request URL.
 
-A dedicated Caddy listener now serves `https://tcstw.youngzyl.me:8444/linuxdo-api`, forwarding to the unchanged loopback backend at `127.0.0.1:8791`. The new TCP/UDP listener passed strict-TLS read-only probes: HTTP/1.1, HTTP/2 and HTTP/3 each returned 200 JSON with the Pages CORS grant for health, `state?view=list` and queue (9/9, repeated at publication). Evidence: `/workspace/linuxdo-port8444-infra/{deploy-result.json,protocol-results.json}`. The existing Hysteria forwarding rule `port=8443:proto=udp:toport=443:toaddr=` was not modified; do not repurpose that UDP port for the reader. Caddy was reloaded with the bind-mounted inode preserved; the backend was not restarted (`NRestarts=0`, start time unchanged). Runtime and permanent firewall rules add only `8444/tcp` and `8444/udp`.
+The only publishable entries are `index.html`, `app.js`, `styles.css`, `runtime-config.js`, `.nojekyll`. A reused output directory with extra files, directories, or symlinks is rejected before writing. Never publish the repository root, fixtures, production state, logs, or credentials.
 
-The published build selects 8444 solely for requests. Its optional, build-validated `readStateNamespace` retains the prior 8443 browser-local read key (`linuxdo-ai.read:<old API base>`), including manual unread choices, without migrating or merging localStorage. When omitted, deployments keep their previous API-base (or same-origin) isolation. Neither value is read from a query parameter or localStorage; the namespace is not a network endpoint. Both runtime-config.js and app.js references are versioned to avoid mixing old and new cached scripts. The active-target record and actual watchdog prompt use 8444; the installed monitor returned `service=up`, `attention=0`, `stale=0`.
+Copy the verified five files into a checkout of `gh-pages` and make a normal commit/push (no force push). Verify the latest build commit and actual public asset hashes, then check the live API through the page's Origin. Current published commit is the SHA above. Do not rebuild it from this note.
 
-Release: source `d8b4a3f17572ab732fcaf11409fe9fb9a4084061`, Pages `0fffb302c2d4009bea56a1a522cb6082af2b8f18`. Independent review `deleg_28a362ca` passed the exact diff with no security/logic blockers (diff SHA256 `bd7bb7050106c5bb9cc34bd725d1dae2482f5351171426c1b7edce7a9cbe52d1`). Candidate checks: 53 focused unit, 11 namespace browser, 48 reader, 22 pin; reviewer reran 23 build unit and 11 namespace checks. The full Python suite was not rerun for this variant.
+## Historical: tcstw user unit and Caddy (before 20260929T2305Z)
 
-Pages reported this exact commit built; public app/index/runtime hashes matched the release manifest. Live desktop/mobile-emulation smoke passed **22/22**, with 9 browser requests (5 API), all GET, all API traffic on8444, no failed requests or console errors. Evidence: `/workspace/linuxdo-api-cutover-release/{manifest.json,review.diff,live-smoke/live-smoke.json}`. This confirms this test route, not every user network; ask the user to reload the reader, not erase their local storage. The separate unpublished `/workspace/linuxdo-port8444-release` variant is superseded and must not be deployed.
+These paths are not the current writer. Kept so a rollback reader can see what was deployed on tcstw.
 
-The only publishable entries are `index.html`, `app.js`, `styles.css`, `runtime-config.js`, `.nojekyll`. A reused output directory with extra files, directories or symlinks is rejected before writing. Never publish the repository root, fixtures, production state, logs or credentials.
+`deploy/linuxdo-ai-feed.service` was the deployed unit source. It bound the application to loopback and applied `MemoryHigh=160M`, `MemoryMax=256M`, `CPUQuota=50%`, `TasksMax=32`, `NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=strict`, `ProtectHome=read-only`, and write access only to project `data` and `logs`. `UMask=0077` protected new state/log files. No hardening was removed to get the unit running. That unit is now disabled.
 
-Copy the verified five files into a checkout of `gh-pages` and make a normal commit/push (no force push). When initially changing Pages source, an explicit Pages build request was necessary; settings alone did not build the new branch. Verify the latest build commit and actual public asset hashes, then check the live API through the page's Origin.
+Historical token and env paths on tcstw, retained with the source data:
+
+- `/home/young/.config/linuxdo-ai/owner-token`
+- `/home/young/.config/linuxdo-ai/service.env`
+- `LINUXDO_AI_OWNER_TOKEN_FILE=/home/young/.config/linuxdo-ai/owner-token`
+- `LINUXDO_AI_ALLOWED_ORIGINS=https://youngzyl.github.io,https://tcstw.youngzyl.me:8443`
+
+The migrated filter still used `deepseek-chat` / `https://api.deepseek.com/v1`. That was not proof that the planned CommandCode research route was available. The same filter settings are what compose.env still sets. Research scheduling is still not enabled.
+
+Historical transport: root-managed Caddy container `xray_caddy_1` handled HTTPS. Host file `/root/docker-compose/xray/config/caddy/Caddyfile`, container mount `/etc/caddy/Caddyfile`. Pre-change backup `/root/docker-compose/xray/config/caddy/Caddyfile.bak-20260921T172323Z`. It was a single-file bind mount: preserve inode, validate, reload. Only `8443/tcp` was added to firewalld at that original install. The 2026-09-25 reader cutover added a dedicated 8444 TCP/UDP listener on that same source Caddy, forwarding to `127.0.0.1:8791`. Those blocks now forward to bwgca. The UDP 8443 NAT to Hysteria 443 was not part of the reader and still is not.
+
+Historical verification, not a current live browser proof:
+
+- Final Python suite at the tcstw deploy: 208 tests passed locally (Python 3.11.15) and in a fresh isolated tcstw tree (Python 3.12.13). Remote tests used ephemeral servers, not production state.
+- Fixture/stub browser suite: 47/47. Ephemeral local servers, not production.
+- Real Pages and real desktop/mobile checks from that deploy are historical. Evidence dirs `/tmp/pages-batch-evidence/` and `/tmp/linuxdo-live-browser-zdz3ju_u/` were temporary.
+- POST-to-failure-log fix evidence: `/tmp/linuxdo-final-security-evidence/`. Deployed `server.py` SHA256 at that restart was `6fecd95eb6506dc52fb3d9347dac5615575f4fb29008e0687e20deb55ea65b44`. The retained production access log had no matching POST at that inspection. That is not proof of complete historical absence.
+- Deployed logs at that time: `/home/young/services/linuxdo-ai/logs/server.log` and the user service journal.
+
+### Historical: 8444 reader cutover on tcstw — published 2026-09-25
+
+A dedicated source Caddy listener served `https://tcstw.youngzyl.me:8444/linuxdo-api` to `127.0.0.1:8791`. Strict-TLS HTTP/1.1, HTTP/2, and HTTP/3 each returned 200 JSON with Pages CORS (9/9). Evidence: `/workspace/linuxdo-port8444-infra/{deploy-result.json,protocol-results.json}`. Release: source `d8b4a3f17572ab732fcaf11409fe9fb9a4084061`, Pages `0fffb302c2d4009bea56a1a522cb6082af2b8f18`. Live smoke 22/22 is historical: `/workspace/linuxdo-api-cutover-release/{manifest.json,review.diff,live-smoke/live-smoke.json}`. The unpublished `/workspace/linuxdo-port8444-release` variant was superseded and must not be deployed. This cutover did not change the UDP 8443 NAT.
 
 ## Research continuation: actual state, not a launch claim
 
-The foundation repairs, permanent deployment and user-space Rust build prerequisite are complete. Production research scheduling, Imagine/Grok execution, safety review integration, sandbox execution, and adaptive tuning are **not enabled**.
+The foundation repairs, permanent deployment, and user-space Rust build prerequisite are complete. Production research scheduling, Imagine/Grok execution, safety review integration, sandbox execution, and adaptive tuning are not enabled.
 
-The isolated Rust spike is at `/home/young/build/linuxdo-spike`, using Rust/Cargo 1.98.1, Tokio and bundled rusqlite. A release binary was built with one build job; a SQLite WAL row survived a fresh process. This is a build/storage experiment, not the production scheduler or evidence of container isolation. Podman reports rootless cgroup v2 with CPU/memory/PID controllers; negative runtime isolation tests still have to run.
+The isolated Rust spike is at `/home/young/build/linuxdo-spike` on tcstw, using Rust/Cargo 1.98.1, Tokio, and bundled rusqlite. That path was not moved with the feed. It is a build/storage experiment, not the production scheduler.
 
-The owner subsequently provisioned the independent CommandCode key in the mode-`0600` file:
+The CommandCode key lives in the mode-0600 `research.env` (`commandcode_apikey`). That file is not loaded by the feed, on tcstw or on bwgca. No Hermes credential pool or OAuth refresh file was copied into the image.
 
-`/home/young/.config/linuxdo-ai/research.env`
+The CommandCode capability gate passed on tcstw before the move: six requests, no retry/fallback, two-turn custom-tool roundtrips on `deepseek/deepseek-v4.1-flash` and `z-ai/glm-5.3-flash`, plus independent GLM allow/block decisions on two synthetic safety fixtures. Secret-free results: `docs/evidence/commandcode-capabilities.json`. Probe v1 source SHA256 `70f237ec610c8d00bf81f6fd21b7e1d571a0d43f8b75e18ac3d0b5cf9a337701`. Probe v2 was not rerun against the API. v2 review `deleg_bda825d6`, source SHA256 `d2041e3c28b66442803b4a3f22f86df8adb69b37ebfc954f63ce590c1c8362c1`. This does not make research live.
 
-The exact variable is `commandcode_apikey`. This file is deliberately **not loaded by the current feed**, so the research key cannot accidentally replace the working filter's credential while its base URL still points to DeepSeek. No Hermes credential pool or OAuth refresh file was copied.
+## Historical: reader reliability release — 2026-09-24
 
-The CommandCode capability gate has now passed on tcstw: six requests with no retry/fallback, two-turn custom-tool roundtrips on both `deepseek/deepseek-v4.1-flash` and `z-ai/glm-5.3-flash`, plus independent GLM allow/block decisions on two synthetic safety fixtures. Returned model IDs matched the requests. `reasoning_effort=high` was requested; this is not proof the provider honored that effort internally. The reviewer fixtures are limited regression evidence, not a general harmlessness guarantee. Secret-free results are in [`docs/evidence/commandcode-capabilities.json`](evidence/commandcode-capabilities.json); the hand-run probe is `scripts/probe_research_commandcode.py`.
+The click-to-pin reader fix (U05) and the compatible `/api/state` remediation (I01) were released together on the tcstw unit.
 
-Evidence provenance matters: the immutable live record was produced by probe **v1**, source SHA256 `70f237ec610c8d00bf81f6fd21b7e1d571a0d43f8b75e18ac3d0b5cf9a337701`. Its six HTTP statuses, returned model IDs and outcome fields were independently checked, and the remote artifact/log were checked for the known credential with no match. Review then found gaps in how the probe enforced failure conditions and filtered provider metadata. Probe **v2** tightens these checks and is tested with synthetic fixtures; it was **not** rerun against the API or retroactively substituted for the v1 producer. No extra live requests were spent. The original producer remains under `/home/young/build/linuxdo-commandcode-capability/`.
-
-The v2 probe passed independent narrow review (`deleg_bda825d6`, source SHA256 `d2041e3c28b66442803b4a3f22f86df8adb69b37ebfc954f63ce590c1c8362c1`). Its 96 isolated tests passed locally and on tcstw/Python 3.12.13. The complete local suite now has 304 passing tests; the deployed feed's earlier 208-test acceptance remains unchanged. A separate mode-`0700` staging directory, `/home/young/build/linuxdo-commandcode-capability-v2/`, contains only the hardened script and fake-transport tests, not credentials. These tests made no live provider calls.
-
-This removes the CommandCode credential/capability blocker only. OAuth search/tool capability tests, production role policy authoring, remaining feed correctness/transaction repairs, durable scheduler/outbox and sandbox isolation gates remain required before advertising research as live. No research loop or generated-code execution was enabled by this probe.
-
-## Reader reliability release — 2026-09-24
-
-The click-to-pin reader fix (U05) and the compatible `/api/state` remediation (I01) were released together.
-
-- Backend deployed at **2026-09-24T04:37:45Z** (`20260924T043745Z`), with backup `/home/young/services/linuxdo-ai/backups/reader-pin-20260924T043745Z`. All five remote source files matched the staged SHA256 values on readback. Released `public/app.js` SHA256 `d13cd6c1a0f2d78b09003cab27a42bc6fb6c209e119cb3d4ccc0fb51af6859de`.
-- Production state was byte-identical immediately after startup and the read probes: **2105 topics, 28 bookmarks, 4 feedback**. The normal scheduler then progressed on its own to **2111 topics, 354 picked, 1757 other, 28 bookmarks**. No production POST/feedback/bookmark probe was used for verification, and the later feedback/queue readback was unchanged.
-- The unit is active/running with `Result=success` and `NRestarts=0`; health returned OK.
-- Review and tests: independent Codex review PASS for U05 (`deleg_68c3d59f`) and for the previous I01 set (`deleg_a130c34e`); 430 Python tests, 55 browser contract checks, 54 reader lifecycle checks, and a 22-check real-input pointer suite.
-- Public build: Pages build commit `23e325a6ccf208ad5daef1b11c05b176edd05b37`; the four public assets matched the built bytes. A bounded live browser smoke run passed **20/20** including the asset gates — that counts checks, not distinct UX cases. It used real mouse and touch input: a 53 ms click against the 250 ms hover threshold, the pinned preview surviving mouseleave and a hover on another row, outside/close/Escape-with-inside-focus closing without reopening, and mobile tap/scrim/reopen. The browser made 9 requests (5 to the API), all GET, with 0 non-GET attempts, 0 failed requests and 0 console errors.
-- Payload observations: the public list at 2111 topics is **387,066 compressed bytes** and carries no `body_text`; the default legacy `/api/state` still includes bodies; on-demand detail reads were confirmed. This is **not** pagination and does not guarantee that the user's own network timeout is eliminated.
-- Evidence: `/workspace/linuxdo-release-pin-20260924/{backend-readback.json,public-readback.json,unit-final.log,live-smoke/live-smoke.json}`. No button or RSS changes were made.
+- Backend deployed at 2026-09-24T04:37:45Z, backup `/home/young/services/linuxdo-ai/backups/reader-pin-20260924T043745Z`. Released `public/app.js` SHA256 `d13cd6c1a0f2d78b09003cab27a42bc6fb6c209e119cb3d4ccc0fb51af6859de`.
+- Production state immediately after that startup: 2105 topics, 28 bookmarks, 4 feedback. The scheduler then moved on its own. No production POST was used for verification.
+- Review: Codex `deleg_68c3d59f` and `deleg_a130c34e`. 430 Python tests, 55 browser contract checks, 54 reader lifecycle checks, 22-check pointer suite. Those counts are that release, not this documentation round.
+- Pages build commit `23e325a6ccf208ad5daef1b11c05b176edd05b37`. Live browser smoke 20/20 is historical. Evidence: `/workspace/linuxdo-release-pin-20260924/{backend-readback.json,public-readback.json,unit-final.log,live-smoke/live-smoke.json}`.
+- Payload observation at 2111 topics: public list 387,066 compressed bytes, no `body_text`. Not pagination.

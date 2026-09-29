@@ -1,8 +1,18 @@
 {
   "frontend_url": "https://youngzyl.github.io/linuxdo-ai-feed/",
-  "api_base": "https://tcstw.youngzyl.me:8444/linuxdo-api",
-  "health_url": "https://tcstw.youngzyl.me:8444/linuxdo-api/health",
-  "service_host": "tcstw.youngzyl.me",
-  "service_unit": "linuxdo-ai-feed.service",
-  "service_path": "/home/young/services/linuxdo-ai"
+  "api_base": "https://bwgca.youngzyl.me:8444/linuxdo-api",
+  "health_url": "https://bwgca.youngzyl.me:8444/linuxdo-api/health",
+  "read_state_namespace": "https://tcstw.youngzyl.me:8443/linuxdo-api",
+  "service_host": "bwgca.youngzyl.me",
+  "ssh_user": "youngzyl",
+  "ssh_port": 26244,
+  "ssh_known_hosts": "/workspace/tcstw-migration-20260927/bwgca-known_hosts",
+  "service_manager": "docker-compose",
+  "service_unit": null,
+  "service_path": "/home/youngzyl/services/linuxdo-ai",
+  "compose_service": "feed",
+  "compose_env_file": "compose.env",
+  "image": "linuxdo-ai-feed:tcstw-migration-caf2efe",
+  "image_id": "sha256:a6ea511f74b8e824328465782f89c89b6cc91e745f7238b9e3aeb21654fe4aed",
+  "source_commit": "caf2efeb791be60c1c037e3ea3be0dee28d6049b"
 }

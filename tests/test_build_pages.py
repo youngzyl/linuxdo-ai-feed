@@ -81,8 +81,8 @@ class TestBundleContents(BuildCase):
     def test_index_loads_runtime_config_before_app(self):
         build_pages.build(API_BASE, self.out)
         html = (self.out / "index.html").read_text(encoding="utf-8")
-        # the paired release marker for a reflow change: both script tags carry it, order intact
-        self.assertIn('src="runtime-config.js?v=20260926-density"', html)
+        # Cache markers match the shipped bundle; runtime config can change independently.
+        self.assertIn('src="runtime-config.js?v=20260929-bwgca-prep"', html)
         self.assertIn('src="app.js?v=20260926-density"', html)
         self.assertLess(html.index("runtime-config.js"), html.index('src="app.js'))
 
