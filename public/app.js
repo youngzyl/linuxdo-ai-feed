@@ -26,6 +26,7 @@
     lsQueue: 'linuxdo-ai.queue',
     lsSeen: 'linuxdo-ai.seenPicked',
     lsDensity: 'linuxdo-ai.density',
+    lsAllLane: 'linuxdo-ai.all-lane',
     lsRead: 'linuxdo-ai.read',
     ssOwner: 'linuxdo-ai.ownerToken',
     readCap: 1000,        /* bounded browser-local read set (oldest ids are dropped) */
@@ -117,6 +118,8 @@
     retry: $('#retry'),
     refresh: $('#refresh'),
     density: $('#density'),
+    allLane: $('#all-lane'),
+    colhead: document.querySelector('.colhead'),
     tabs: $('#tabs'),
     drawer: $('#drawer'),
     scrim: $('#scrim'),
@@ -151,6 +154,7 @@
     votes: new Map(), /* id -> 'keep' | 'skip' */
     read: new Set(),  /* ids read in this browser (localStorage, namespaced by apiBase) */
     density: 'gap',
+    allLane: 'show',     /* desktop 全部 lane: 'show' | 'hide'. Not a request destination. */
     tab: 'all',
     occupied: new Set(), /* 'row:col' slots filled by the previous render */
     flipLog: [],         /* dev-only: batch summary of each FLIP run */
@@ -724,6 +728,10 @@
     return null;
   }
 
+  function laneVisible(col) {
+    return !(col === 1 && S.allLane === 'hide' && isDesktop());
+  }
+
   /* the masthead is not sticky: while it is on screen the reader is travelling to or from the
      density control, so the sample freezes instead of adopting the article at the page top */
   function mastheadVisible() {
@@ -811,7 +819,7 @@
                    top: current.node.getBoundingClientRect().top };
       return;
     }
-    const order = [S.browseCol || 1, 1, 2, 3].filter((v, i, arr) => v && arr.indexOf(v) === i);
+    const order = [S.browseCol || 1, 1, 2, 3].filter((v, i, arr) => v && arr.indexOf(v) === i && laneVisible(v));
     for (let i = 0; i < order.length; i++) {
       const node = firstVisibleNearTop(order[i]);
       if (node) {
@@ -850,7 +858,7 @@
                         top: alt.getBoundingClientRect().top };
       return null;
     }
-    const order = [S.browseCol || 1, 1, 2, 3].filter((v, i, arr) => v && arr.indexOf(v) === i);
+    const order = [S.browseCol || 1, 1, 2, 3].filter((v, i, arr) => v && arr.indexOf(v) === i && laneVisible(v));
     for (let i = 0; i < order.length; i++) {
       const node = firstVisibleNearTop(order[i]);
       if (node) {
@@ -967,6 +975,7 @@
     el.board.hidden = false;
     el.board.dataset.tab = S.tab;
     el.board.classList.remove('is-compact');
+    applyAllLaneClass();
     el.board.setAttribute('aria-busy', 'true');
     el.empties.hidden = true;
 
@@ -1010,6 +1019,7 @@
        stacks, so surviving items pull up per column. */
     const compact = isDesktop() && S.density === 'compact';
     el.board.classList.toggle('is-compact', compact);
+    applyAllLaneClass();
 
     /* slots that were filled last render and are empty now fade in with their
        row (opacity only) instead of popping */
@@ -1949,6 +1959,23 @@
     S.selfScrollY = Math.round(window.scrollY);
   });
 
+  if (el.allLane) el.allLane.addEventListener('click', () => {
+    /* Collapsing a lane changes which article is in view, so this is not a density reflow:
+       do not sample, do not restore scroll. A reflow can still move a row under a stationary
+       pointer — reuse the density hover guard so that does not open a passive preview. */
+    hoverGuard = true;
+    window.clearTimeout(hoverTimer);
+    window.clearTimeout(closeTimer);
+    S.allLane = S.allLane === 'hide' ? 'show' : 'hide';
+    if (S.allLane === 'hide') {
+      if (S.anchor && S.anchor.col === 1) S.anchor = null;
+      if (S.browseCol === 1) S.browseCol = 2;
+    }
+    syncAllLaneControl();
+    try { localStorage.setItem(CFG.lsAllLane, S.allLane); } catch (err) { /* noop */ }
+    render(null, null);
+  });
+
   el.refresh.addEventListener('click', async () => {
     if (el.refresh.getAttribute('aria-busy') === '1') return;
     el.refresh.setAttribute('aria-busy', '1');
@@ -2158,6 +2185,10 @@
       const d = localStorage.getItem(CFG.lsDensity);
       if (d === 'compact' || d === 'gap') S.density = d;
     } catch (err) { /* noop */ }
+    try {
+      const lane = localStorage.getItem(CFG.lsAllLane);
+      if (lane === 'show' || lane === 'hide') S.allLane = lane;
+    } catch (err) { /* noop */ }
     /* ?tab=picked|queue — deep link into one list (same code path as tap/swipe) */
     const wanted = params.get('tab');
     if (wanted === 'all' || wanted === 'picked' || wanted === 'queue') {
@@ -2168,6 +2199,26 @@
     }
     el.density.setAttribute('aria-pressed', S.density === 'compact' ? 'true' : 'false');
     el.density.title = '空位显示方式：' + (S.density === 'compact' ? '紧凑（空位折叠）' : '间隙（空位保留）');
+    syncAllLaneControl();
+  }
+
+  function allLaneCollapsed() {
+    return S.allLane === 'hide' && isDesktop();
+  }
+
+  function applyAllLaneClass() {
+    const on = allLaneCollapsed();
+    el.board.classList.toggle('is-all-collapsed', on);
+    if (el.colhead) el.colhead.classList.toggle('is-all-collapsed', on);
+    if (el.empties) el.empties.classList.toggle('is-all-collapsed', on);
+  }
+
+  function syncAllLaneControl() {
+    if (!el.allLane) return;
+    const shown = S.allLane !== 'hide';
+    el.allLane.setAttribute('aria-pressed', shown ? 'true' : 'false');
+    el.allLane.title = shown ? '收起全部栏' : '显示全部栏';
+    applyAllLaneClass();
   }
 
   async function init() {
