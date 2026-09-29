@@ -342,6 +342,22 @@ body {
   .empties > .empty:nth-child(1) { grid-column: 1; }
   .empties > .empty:nth-child(2) { grid-column: 2; }
   .empties > .empty:nth-child(3) { grid-column: 3; }
+
+  /* U08: collapse the left 全部 lane. Desktop only — the mobile query below
+     still owns .cell--cN via data-tab, and this class must not hide that tab. */
+  .board.is-all-collapsed,
+  .colhead.is-all-collapsed,
+  .empties.is-all-collapsed {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .board.is-all-collapsed .cell--c1,
+  .board.is-all-collapsed .col--c1,
+  .colhead.is-all-collapsed > .label:first-child,
+  .empties.is-all-collapsed > .empty:nth-child(1) {
+    display: none;
+  }
+  .empties.is-all-collapsed > .empty:nth-child(2) { grid-column: 1; }
+  .empties.is-all-collapsed > .empty:nth-child(3) { grid-column: 2; }
 }
 
 @media (max-width: 899px) {
