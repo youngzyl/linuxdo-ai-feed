@@ -346,3 +346,37 @@ in engines that type their pointer input — `PointerEvent`, a `pointermove` who
 the guard a density reflow leaves stands, and the preview resumes on the next explicit activation
 (click / tap / Enter / Space) rather than on movement. No touch heuristics, cooldowns or storage are
 involved, and explicit activation behaves identically to the modern path.
+
+## U08 — desktop 全部 lane collapse (documentation)
+
+The masthead adds a `全部` toggle (`#all-lane`) next to the density control. On desktop it
+collapses the left 全部 lane so the board reads as two columns (精选 + 收藏): the board, the
+column header and the empty-column notices re-pin to a 2-column grid with the first column
+hidden. The preference is browser-local (`linuxdo-ai.all-lane` = `show|hide`, default `show`,
+silent on storage failure; invalid values fall back to `show`). Mobile is unaffected — the
+`data-tab` list rules still own the single-column layout. The toggle is not a request
+destination and never marks read, fetches, opens a preview or changes bookmarks; collapsing
+drops a stale lane-1 reading anchor so a later density toggle cannot restore into the hidden
+lane.
+
+## U09 — mobile preview sheet sizes
+
+The mobile preview sheet has two sizes, and reading is the default:
+
+- Reading (`full`, default): the sheet fills the screen — `height`/`max-height` `96vh`,
+  overridden by `96dvh` where the dynamic viewport unit is supported, so an on-screen keyboard
+  cannot cover the body.
+- Peek (`is-peek` class on `#drawer`): exactly the previous behaviour — content-sized,
+  `max-height: 80vh`.
+
+The `drawer__handle` bar becomes the size toggle (`#d-size`): a real button whose visible pill
+stays 40×4px while its hit area is at least 44px tall; it is absent on desktop. `aria-expanded`
+is true while reading, and the label/title name the action (`收起预览` in reading, `展开阅读` in
+peek). The size preference is browser-local (`linuxdo-ai.drawer-size` = `full|peek`, default
+`full`, silent on storage failure) and independent of the read set, bookmarks, filters, density
+and the all-lane preference. The toggle only resizes the sheet: it never opens or closes the
+drawer, marks read, fetches, or touches the pin.
+
+The scrim strip above the sheet (the top ~4vh in reading mode) still closes on tap in both
+sizes, and 关闭/Escape semantics are unchanged. On desktop the drawer remains the 400px right
+panel with the 44vh body cap and no visible toggle. Mobile body text is 16px/1.78 (serif).

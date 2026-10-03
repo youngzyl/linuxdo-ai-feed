@@ -785,14 +785,18 @@ body {
 }
 
 @media (max-width: 899px) {
-  /* bottom sheet: pinned to the viewport bottom, capped at 80vh; the body
-     scrolls, the action row stays reachable at the bottom of the sheet */
+  /* bottom sheet: pinned to the viewport bottom. U09: there are two sizes and reading is the
+     default — the sheet fills the screen. The dvh pair (after the vh fallback) keeps the
+     height tied to the visual viewport, so an on-screen keyboard cannot cover the body. */
   .drawer {
     top: auto;
     left: 0;
     right: 0;
     bottom: 0;
-    max-height: 80vh;
+    height: 96vh;
+    height: 96dvh;
+    max-height: 96vh;
+    max-height: 96dvh;
     border-left: 0;
     border-top: 1px solid var(--rule);
     border-radius: 14px 14px 0 0;
@@ -801,18 +805,38 @@ body {
     display: flex;
     flex-direction: column;
   }
+  /* peek: exactly the previous behaviour - content-sized, capped at 80vh */
+  .drawer.is-peek {
+    height: auto;
+    max-height: 80vh;
+  }
   .drawer__body {
     flex: 1 1 auto;
     min-height: 0;
     max-height: none;
+    font: 16px/1.78 var(--serif);
   }
   .drawer__actions { margin-top: auto; }
-  /* drag-handle visual — the sheet itself stays a plain scroll container */
+  /* U09: the handle is the size toggle. The visible pill stays 40x4px, but the button's
+     hit area is at least 44px tall (the bar is drawn by ::before, not by the button box). */
   .drawer__handle {
-    display: block;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 44px;
+    margin: 0 0 var(--s3);
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    appearance: none;
+  }
+  .drawer__handle::before {
+    content: "";
     width: 40px;
     height: 4px;
-    margin: 0 auto var(--s3);
     border-radius: 2px;
     background: var(--hair);
   }

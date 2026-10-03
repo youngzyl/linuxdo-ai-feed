@@ -82,8 +82,8 @@ class TestBundleContents(BuildCase):
         build_pages.build(API_BASE, self.out)
         html = (self.out / "index.html").read_text(encoding="utf-8")
         # Cache markers match the shipped bundle; runtime config can change independently.
-        self.assertIn('src="runtime-config.js?v=20260929-all-lane"', html)
-        self.assertIn('src="app.js?v=20260929-all-lane"', html)
+        self.assertIn('src="runtime-config.js?v=20261004-drawer-size"', html)
+        self.assertIn('src="app.js?v=20261004-drawer-size"', html)
         self.assertLess(html.index("runtime-config.js"), html.index('src="app.js'))
 
     def test_optional_read_namespace_preserves_old_key_without_changing_api(self):
