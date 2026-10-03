@@ -27,6 +27,7 @@
     lsSeen: 'linuxdo-ai.seenPicked',
     lsDensity: 'linuxdo-ai.density',
     lsAllLane: 'linuxdo-ai.all-lane',
+    lsDrawerSize: 'linuxdo-ai.drawer-size',
     lsRead: 'linuxdo-ai.read',
     ssOwner: 'linuxdo-ai.ownerToken',
     readCap: 1000,        /* bounded browser-local read set (oldest ids are dropped) */
@@ -141,6 +142,7 @@
     dTaste: $('#d-taste'),
     dLink: $('#d-link'),
     dClose: $('#d-close'),
+    dSize: $('#d-size'),
     owner: $('#owner'),
     authchip: $('#authchip'),
     opstatus: $('#opstatus')
@@ -155,6 +157,7 @@
     read: new Set(),  /* ids read in this browser (localStorage, namespaced by apiBase) */
     density: 'gap',
     allLane: 'show',     /* desktop 全部 lane: 'show' | 'hide'. Not a request destination. */
+    drawerSize: 'full',  /* mobile preview sheet: 'full' (reading) | 'peek'. Not a request destination. */
     tab: 'all',
     occupied: new Set(), /* 'row:col' slots filled by the previous render */
     flipLog: [],         /* dev-only: batch summary of each FLIP run */
@@ -1904,6 +1907,14 @@
 
   el.dClose.addEventListener('click', () => closeDrawer(true));
 
+  /* U09: the handle is the sheet-size toggle. It only resizes the preview — it never opens
+     or closes the drawer, marks read, fetches anything, or touches the pin. */
+  if (el.dSize) el.dSize.addEventListener('click', () => {
+    S.drawerSize = S.drawerSize === 'full' ? 'peek' : 'full';
+    try { localStorage.setItem(CFG.lsDrawerSize, S.drawerSize); } catch (err) { /* noop */ }
+    syncDrawerSize();
+  });
+
   el.dQueue.addEventListener('click', () => {
     if (S.openId) toggleQueue(S.openId);
   });
@@ -2189,6 +2200,10 @@
       const lane = localStorage.getItem(CFG.lsAllLane);
       if (lane === 'show' || lane === 'hide') S.allLane = lane;
     } catch (err) { /* noop */ }
+    try {
+      const size = localStorage.getItem(CFG.lsDrawerSize);
+      if (size === 'full' || size === 'peek') S.drawerSize = size;
+    } catch (err) { /* noop */ }
     /* ?tab=picked|queue — deep link into one list (same code path as tap/swipe) */
     const wanted = params.get('tab');
     if (wanted === 'all' || wanted === 'picked' || wanted === 'queue') {
@@ -2200,6 +2215,19 @@
     el.density.setAttribute('aria-pressed', S.density === 'compact' ? 'true' : 'false');
     el.density.title = '空位显示方式：' + (S.density === 'compact' ? '紧凑（空位折叠）' : '间隙（空位保留）');
     syncAllLaneControl();
+    syncDrawerSize();
+  }
+
+  /* The sheet-size control: aria-expanded reflects the reading size (the default), and the
+     label/title name the ACTION the tap performs. */
+  function syncDrawerSize() {
+    if (!el.dSize) return;
+    const full = S.drawerSize === 'full';
+    el.drawer.classList.toggle('is-peek', !full);
+    el.dSize.setAttribute('aria-expanded', full ? 'true' : 'false');
+    const action = full ? '收起预览' : '展开阅读';
+    el.dSize.setAttribute('aria-label', action);
+    el.dSize.title = action;
   }
 
   function allLaneCollapsed() {
