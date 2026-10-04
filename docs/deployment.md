@@ -29,7 +29,7 @@ Pinned SSH known_hosts for this host: `/workspace/tcstw-migration-20260927/bwgca
 Paths the running feed actually uses:
 
 - Compose file: `/home/youngzyl/services/linuxdo-ai/compose.yaml` (mode 0600).
-- Compose env: `/home/youngzyl/services/linuxdo-ai/compose.env` (mode 0600). Nonsecret keys: `LINUXDO_UID=1000`, `LINUXDO_GID=1000`, data/logs/token/service.env paths below, `LINUXDO_AI_ALLOWED_ORIGINS=https://youngzyl.github.io,https://tcstw.youngzyl.me:8443`, filter base `https://api.deepseek.com/v1`, model `deepseek-chat`.
+- Compose env: `/home/youngzyl/services/linuxdo-ai/compose.env` (mode 0600). Nonsecret keys: `LINUXDO_UID=1000`, `LINUXDO_GID=1000`, data/logs/token/service.env paths below, `LINUXDO_AI_ALLOWED_ORIGINS=https://youngzyl.github.io,https://tcstw.youngzyl.me:8443`, filter base `https://api.commandcode.ai/provider/v1`, model `deepseek/deepseek-v4.1-flash` (switched and verified 2026-10-04; [evidence](commandcode-filter-switch.md)).
 - Data: `/home/youngzyl/services/linuxdo-ai/data` bind-mounted at `/opt/linuxdo-ai/data`. Do not let Compose create the host path.
 - Logs: `/home/youngzyl/services/linuxdo-ai/logs` bind-mounted at `/opt/linuxdo-ai/logs`.
 - Owner token file: `/home/youngzyl/.config/linuxdo-ai/owner-token`, mode 0600, uid 1000. Mounted read-only at `/run/secrets/owner-token`. The process env name is `LINUXDO_AI_OWNER_TOKEN_FILE=/run/secrets/owner-token`.
@@ -92,7 +92,7 @@ Historical token and env paths on tcstw, retained with the source data:
 - `LINUXDO_AI_OWNER_TOKEN_FILE=/home/young/.config/linuxdo-ai/owner-token`
 - `LINUXDO_AI_ALLOWED_ORIGINS=https://youngzyl.github.io,https://tcstw.youngzyl.me:8443`
 
-The migrated filter still used `deepseek-chat` / `https://api.deepseek.com/v1`. That was not proof that the planned CommandCode research route was available. The same filter settings are what compose.env still sets. Research scheduling is still not enabled.
+At migration the filter still used `deepseek-chat` / `https://api.deepseek.com/v1`. On 2026-10-04 the production filter was corrected to CommandCode `deepseek/deepseek-v4.1-flash`; the first real cycle completed 88 judgments with 11 successful batches and no failed batches. This changes only the filter route; research scheduling is still not enabled.
 
 Historical transport: root-managed Caddy container `xray_caddy_1` handled HTTPS. Host file `/root/docker-compose/xray/config/caddy/Caddyfile`, container mount `/etc/caddy/Caddyfile`. Pre-change backup `/root/docker-compose/xray/config/caddy/Caddyfile.bak-20260921T172323Z`. It was a single-file bind mount: preserve inode, validate, reload. Only `8443/tcp` was added to firewalld at that original install. The 2026-09-25 reader cutover added a dedicated 8444 TCP/UDP listener on that same source Caddy, forwarding to `127.0.0.1:8791`. Those blocks now forward to bwgca. The UDP 8443 NAT to Hysteria 443 was not part of the reader and still is not.
 
@@ -114,7 +114,7 @@ The foundation repairs, permanent deployment, and user-space Rust build prerequi
 
 The isolated Rust spike is at `/home/young/build/linuxdo-spike` on tcstw, using Rust/Cargo 1.98.1, Tokio, and bundled rusqlite. That path was not moved with the feed. It is a build/storage experiment, not the production scheduler.
 
-The CommandCode key lives in the mode-0600 `research.env` (`commandcode_apikey`). That file is not loaded by the feed, on tcstw or on bwgca. No Hermes credential pool or OAuth refresh file was copied into the image.
+The project CommandCode key remains in mode-0600 `research.env` (`commandcode_apikey`). Since 2026-10-04 only that key is also installed in the bwgca feed's mode-0600 `service.env`; the feed resolves it as `env:commandcode_apikey`. The whole research.env file is not loaded, and no research scheduling was enabled. No Hermes credential pool or OAuth refresh file was copied into the image.
 
 The CommandCode capability gate passed on tcstw before the move: six requests, no retry/fallback, two-turn custom-tool roundtrips on `deepseek/deepseek-v4.1-flash` and `z-ai/glm-5.3-flash`, plus independent GLM allow/block decisions on two synthetic safety fixtures. Secret-free results: `docs/evidence/commandcode-capabilities.json`. Probe v1 source SHA256 `70f237ec610c8d00bf81f6fd21b7e1d571a0d43f8b75e18ac3d0b5cf9a337701`. Probe v2 was not rerun against the API. v2 review `deleg_bda825d6`, source SHA256 `d2041e3c28b66442803b4a3f22f86df8adb69b37ebfc954f63ce590c1c8362c1`. This does not make research live.
 
