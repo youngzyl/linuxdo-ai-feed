@@ -25,8 +25,14 @@ The original run `luna-day-1794512882`, provider Batch `batch_6af618167de8819088
 - One real complete image-bearing RSS post was fetched and sent as raster bytes in an authorized test-only request. Provider returned completed, actual `gpt-6-luna` and `flex`, 2,235 input and 172 output tokens. No verdict was applied. This exercised the build immediately before a fairness-only collection change, not the final deployment image.
 - Independent static reviews identified and led to fixes for missing image-source hosts, per-request byte budget handling and hydration starvation. The final hydration/fairness delta was reviewed by the lead.
 
-## Cutover status
+## Production cutover
 
-Implementation commit only: final image build/config cutover and scheduled production readback must be recorded separately. A passing unit suite or successful image API test is not a claim that the automatic pipeline is deployed.
+Deployed image `sha256:389533d52e4d95b1d30db57e0c864b0b5f850e8b91bd5db873bb25244f3cccb9` with config SHA-256 `2a22482290f6083a6031599e08bcf7bca9563817f46e9c9e7458f2d2a4c4c78a`. Both activation and historical T0 are `1794557062`; the historical start is `1793952262`. The scheduler continues every 15 minutes, prioritizing future arrivals while draining the authorized seven-day unjudged window.
+
+The first production image applied six Flex verdicts, including three picked; state showed five historical topics and one future arrival. The final health-accounting image's startup cycle applied eight more verdicts, two picked. Public health was independently read back as `status=ok`, `filter.ok=true`, `service_tier=flex`, one successful batch, zero failed batches, no last error and `attention.needed=false`. Usage for that cycle was 4,745 input and 1,540 output tokens, including 990 reasoning tokens. Public per-topic GET also confirmed prior image-bearing verdicts remained available.
+
+All 32 bookmarks, six feedback records, the feedback journal and original Luna receipts were preserved by before/after hash comparisons. Background seven-day processing is enabled, not completed. Uninspected or failed images are deferred rather than silently classified as text-only; hydration backlog is reported separately from provider failure. Direct detail reads may receive HTTP 429 and use the existing configured fallback. No Standard/provider fallback is enabled.
+
+The final source suite passed 171 tests; the final image passed 15 targeted tests. Lead worktree checks independently passed 58 integration/security tests before cutover and 17 hydration/health regression tests after the final delta.
 
 Rollback uses the compatible candidate image with both filters disabled and the same live state. Never restore an old state snapshot over newer bookmarks or replies, and never use an older image that drops Luna/Flex fields.
