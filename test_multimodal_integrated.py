@@ -113,7 +113,7 @@ class MultimodalTests(unittest.TestCase):
   self.add();self.s.set_fields(1,images=['https://linux.do/uploads/a.jpg'],images_omitted=0,images_inspected=True,detail_fetched=True)
   f=FutureFlex(self.cfg,self.s,lambda x:None,transport=lambda *a:self.fail('must not call provider'),clock=lambda:self.now)
   with patch('trusted_images.fetch',side_effect=ValueError('synthetic')):r=f.run()
-  self.assertFalse(r['ok']);self.assertEqual(r['error'],'image_incomplete');self.assertIsNone(self.s.get(1)['filter']);self.assertNotEqual(self.s.data['future_flex']['status'],'unknown')
+  self.assertFalse(r['ok']);self.assertEqual(r['error'],'image_download_failed');self.assertEqual(r['batches_failed'],1);self.assertEqual(self.s.get(1)['future_flex_image_retry']['attempts'],1);self.assertIsNone(self.s.get(1)['filter']);self.assertNotEqual(self.s.data['future_flex']['status'],'unknown')
  def test_one_image_failure_does_not_block_other_topic(self):
   for i in (1,2):self.s.upsert_topics([{'id':i,'title':str(i),'created_at':'2026-11-12T19:49:00Z','first_seen_at':'2026-11-12T19:49:00Z','images':['https://linux.do/%s.jpg'%i],'images_omitted':0,'images_inspected':True}])
   def fetch(url):
@@ -121,7 +121,7 @@ class MultimodalTests(unittest.TestCase):
    return b'jpeg'
   f=FutureFlex(self.cfg,self.s,lambda x:None,transport=self.provider,clock=lambda:self.now)
   with patch('trusted_images.fetch',side_effect=fetch):r=f.run()
-  self.assertEqual(r['judged'],1);self.assertTrue(r['partial']);self.assertIsNone(self.s.get(1)['filter']);self.assertIsNotNone(self.s.get(2)['filter']);self.assertEqual(self.s.get(1)['future_flex_image_retry']['attempts'],1)
+  self.assertEqual(r['judged'],1);self.assertTrue(r['ok']);self.assertEqual(r['batches_ok'],1);self.assertEqual(r['batches_failed'],0);self.assertIsNone(r['error']);self.assertEqual(r['image_incomplete'],1);self.assertTrue(r['partial']);self.assertIsNone(self.s.get(1)['filter']);self.assertIsNotNone(self.s.get(2)['filter']);self.assertEqual(self.s.get(1)['future_flex_image_retry']['attempts'],1)
  def test_too_many_images_quarantined_but_other_topics_advance(self):
   for i in (1,2):self.s.upsert_topics([{'id':i,'title':str(i),'created_at':'2026-11-12T19:49:00Z','first_seen_at':'2026-11-12T19:49:00Z','images':[],'images_omitted':2 if i==1 else 0,'images_inspected':True}])
   clock=[self.now];f=FutureFlex(self.cfg,self.s,lambda x:None,transport=self.provider,clock=lambda:clock[0]);r=f.run();self.assertEqual(r['judged'],1);self.assertTrue(r['partial'])
@@ -138,4 +138,28 @@ class MultimodalTests(unittest.TestCase):
   f.transport=self.provider
   with patch('trusted_images.fetch',return_value=b'fixture-jpeg'):r=f.run()
   self.assertEqual(r['judged'],1)
+ def test_pipeline_health_http_fail_partial_and_waiting(self):
+  import config
+  from pipeline import Pipeline
+  from singleton import CycleLock
+  from unittest.mock import MagicMock
+  cfg=config.load_config();cfg['filter']['enabled']=True;cfg['future_flex']=dict(self.cfg['future_flex'],backoff_seconds=1)
+  self.add();self.s.set_fields(1,images=[],images_omitted=0,images_inspected=True)
+  p=Pipeline(cfg,self.s,lambda _:None);p.cycle_lock=CycleLock(self.p/'cycle');clock=[self.now];p.filter.clock=lambda:clock[0]
+  p.collector.categories=[1];p.collector.fetch_list=lambda pages=None:{'topics':[],'pages':1,'page_errors':[]}
+  conn=MagicMock();conn.getresponse.return_value.status=429;conn.getresponse.return_value.read.return_value=b'limited'
+  with patch('future_flex.http.client.HTTPSConnection',return_value=conn):
+   for n in (1,2):
+    result=p.run_cycle(do_detail=False)['filter'];self.assertFalse(result['ok']);self.assertEqual(result['error'],'rate_limited');self.assertEqual(self.s.data['health']['filter_consecutive_errors'],n);clock[0]+=2
+  self.s.upsert_topics([{'id':2,'title':'waiting','created_at':'2026-11-12T19:49:00Z','first_seen_at':'2026-11-12T19:49:00Z'}]);p.filter.transport=self.provider
+  result=p.run_cycle(do_detail=False)['filter'];self.assertTrue(result['ok']);self.assertEqual(result['batches_ok'],1);self.assertTrue(result['partial']);self.assertEqual(result['image_incomplete'],1);self.assertIsNone(result['error']);self.assertEqual(self.s.data['health']['filter_consecutive_errors'],0)
+  self.s.record_filter_failure('fixture');self.s.record_filter_failure('fixture')
+  result=p.run_cycle(do_detail=False)['filter'];self.assertTrue(result['ok']);self.assertTrue(result['waiting_images']);self.assertEqual(result['batches_failed'],0);self.assertEqual(self.s.data['health']['filter_consecutive_errors'],0)
+ def test_waiting_omitted_and_quarantined(self):
+  self.add();self.s.set_fields(1,images=[],images_omitted=1,images_inspected=True)
+  f=FutureFlex(self.cfg,self.s,lambda x:None,transport=lambda *x:self.fail('no provider'),clock=lambda:self.now)
+  for _ in range(2):
+   result=f.run();self.assertTrue(result['ok']);self.assertTrue(result['waiting_images']);self.assertEqual(result['batches_failed'],0);self.assertEqual(result['image_incomplete'],1);self.assertIsNone(result['error'])
+  self.s.get(1)['future_flex_image_retry']['quarantined']=True
+  result=f.run();self.assertTrue(result['ok']);self.assertTrue(result['waiting_images']);self.assertEqual(result['batches_failed'],0)
 if __name__=='__main__':unittest.main()

@@ -165,7 +165,7 @@ class FutureFlex:
    else:rows=rows[:self.n];incomplete=0
    if not rows:
     if incomplete:
-     s.update(error='image_incomplete',batches_failed=1,partial=True,image_incomplete=incomplete);return s
+     s.update(ok=True,waiting_images=True,partial=True,image_incomplete=incomplete);return s
     s.update(ok=True);return s
    import copy
    rows=copy.deepcopy(rows);versions={t['id']:source_fingerprint(t) for t in rows};expected={t['id']:copy.deepcopy(t.get('filter')) for t in rows};image_versions={t['id']:image_signature(t) for t in rows}
@@ -198,7 +198,9 @@ class FutureFlex:
      if changed:store.save()
    rows=good
    if not rows:
-    s.update(error='image_incomplete',batches_failed=1,partial=True,image_failed=len(failed),image_incomplete=incomplete);return s
+    if failed:s.update(error='image_download_failed',batches_failed=1,partial=True,image_failed=len(failed),image_incomplete=incomplete)
+    else:s.update(ok=True,waiting_images=True,partial=bool(incomplete),image_failed=0,image_incomplete=incomplete,image_deferred=deferred)
+    return s
    media=build_image_parts(rows,lambda url:raw_by_url[url]);parts=media['parts']
    if media['incomplete']:
     s.update(error='image_incomplete',batches_failed=1,partial=True,image_incomplete=incomplete+1);return s
@@ -245,6 +247,5 @@ class FutureFlex:
      s['judged']+=1;s['picked']+=bool(v['valuable'])
     else:s['stale']+=1
    u=usage(body);m=store.data['future_flex'];m.update(status='ready',pending_ids=[],last_usage=u,last_tier=body['service_tier'],last_estimated_cost=estimated_cost(u,self.cfg.get('rates_per_million') or {}));store.save()
-  s.update(ok=not bool(incomplete),partial=bool(incomplete),image_incomplete=incomplete,image_deferred=deferred,service_tier=body['service_tier'],usage=u,estimated_cost=m['last_estimated_cost'])
-  if incomplete:s['error']='image_incomplete'
+  s.update(ok=True,batches_ok=1,partial=bool(incomplete),image_incomplete=incomplete,image_deferred=deferred,service_tier=body['service_tier'],usage=u,estimated_cost=m['last_estimated_cost'])
   return s
