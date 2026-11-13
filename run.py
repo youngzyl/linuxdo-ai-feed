@@ -21,6 +21,7 @@ from config import DATA_DIR, LOG_DIR, resolve_api_key
 from pipeline import Pipeline, Scheduler
 from server import App, build_server
 from store import Store
+from singleton import CycleLock
 
 
 def setup_logging(verbose: bool = False) -> logging.Logger:
@@ -40,11 +41,17 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
 
 
 def build(cfg: dict, verbose: bool = False):
+    # Hold across the Store, scheduler and HTTP server lifetime, including CLI
+    # cycles/status/probe, before any Store reads or creation.
+    lock = CycleLock(DATA_DIR / ".writer.lock")
+    if not lock.acquire():
+        raise RuntimeError("another process owns this data directory")
     logger = setup_logging(verbose)
     log = logger.info
     cfg = dict(cfg)
     cfg["_data_dir"] = str(DATA_DIR)
     store = Store(DATA_DIR / "state.json", LOG_DIR / "failures.jsonl")
+    store._process_lock = lock
     pipeline = Pipeline(cfg, store, log)
     return cfg, store, pipeline, log
 

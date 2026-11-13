@@ -82,6 +82,17 @@ class Collector:
         self.last_list_source = "direct"
 
     # ------------------------------------------------------------------ utilities
+    def _image_fields(self, html):
+        if self.cfg.get('future_flex', {}).get('images_enabled') is not True:
+            return {}
+        if not isinstance(html, str):
+            return {'images_inspected': False, 'image_inspection_pending': True}
+        from op_images import extract_op_images
+        try:
+            r = extract_op_images(html)
+            return {'images': r['images'], 'images_omitted': r['omitted'], 'images_inspected': True, 'image_inspection_pending': False}
+        except Exception:
+            return {'images_inspected': False, 'image_inspection_pending': True}
     def _load_categories_cache(self):
         path = self.cfg.get("_data_dir")
         try:
@@ -295,6 +306,7 @@ class Collector:
             pub = re.search(r"<pubDate>(.*?)</pubDate>", item, re.S)
             out[tid] = {
                 "body_text": html_to_text(body)[:cap],
+                **self._image_fields(body if desc else None),
                 "rss_title": html_mod.unescape(title.group(1)).strip() if title else "",
                 "rss_pub_date": pub.group(1).strip() if pub else "",
             }
@@ -307,12 +319,15 @@ class Collector:
             if not topic:
                 continue
             matched += 1
-            if topic.get("detail_fetched"):
+            if topic.get("detail_fetched") and not (self.cfg.get('future_flex', {}).get('images_enabled') is True and topic.get('image_inspection_pending')):
                 continue
             body = payload.get("body_text") or ""
+            if topic.get('detail_fetched') and payload.get('images_inspected') is False:
+                body = topic.get('body_text') or ''
             self.store.set_fields(
                 tid,
                 body_text=body,
+                **{k: payload[k] for k in ('images', 'images_omitted', 'images_inspected', 'image_inspection_pending') if k in payload},
                 detail_fetched=True,
                 detail_source="rss",
             )
@@ -337,11 +352,12 @@ class Collector:
 
     def _body_from_topic_json(self, blob: dict) -> dict:
         posts = (blob.get("post_stream") or {}).get("posts") or []
-        op = posts[0] if posts else {}
+        op = next((post for post in posts if post.get('post_number') == 1), {})
         body = html_to_text(op.get("cooked") or "")
         cap = int(self.cfg["fetch"]["body_cap"])
         return {
             "body_text": body[:cap],
+            **self._image_fields(op.get('cooked')),
             "title": html_mod.unescape(blob.get("title") or "").strip(),
             "author": op.get("username") or "",
             "created_at": op.get("created_at"),
@@ -369,8 +385,17 @@ class Collector:
         targets = topic_ids[:budget]
         for index, tid in enumerate(targets):
             topic = self.store.get(tid)
-            if not topic or topic.get("detail_fetched"):
+            if not topic or (topic.get("detail_fetched") and not (self.cfg.get('future_flex', {}).get('images_enabled') is True and topic.get('image_inspection_pending'))):
                 continue
+            # Rotate only work actually attempted, not items deferred by early stop.
+            if self.cfg.get('future_flex', {}).get('enabled') is True and self.cfg.get('future_flex', {}).get('images_enabled') is True and topic.get('image_inspection_pending') is True:
+                with self.store.lock:
+                    meta = self.store.data.get('future_flex') or {}
+                    if meta:
+                        seq = meta.get('future_flex_reinspection_seq', 0) + 1
+                        meta['future_flex_reinspection_seq'] = seq
+                        topic['future_flex_reinspection_seq'] = seq
+                        self.store.save()
             detail = None
             direct_err = None
             if not skip_direct:
@@ -410,6 +435,13 @@ class Collector:
                 except Exception as exc:
                     failed += 1
                     consecutive_failures += 1
+                    if self.cfg.get('future_flex', {}).get('images_enabled') is True:
+                        previous = topic.get('future_flex_detail_retry') or {}
+                        self.store.set_fields(tid, future_flex_detail_retry={
+                            'attempts': previous.get('attempts', 0) + 1,
+                            'next_retry': int(time.time()) + max(1, int(self.cfg.get('future_flex', {}).get('detail_backoff_seconds', 60))),
+                        })
+                        self.store.save()
                     self.store.add_failure(
                         "detail",
                         f"{exc}",
@@ -430,10 +462,21 @@ class Collector:
                     continue
             self.store.set_fields(
                 tid,
-                body_text=detail.get("body_text") or "",
+                body_text=(topic.get('body_text') or '') if topic.get('detail_fetched') and detail.get('images_inspected') is False else (detail.get("body_text") or ""),
+                **{k: detail[k] for k in ('images', 'images_omitted', 'images_inspected', 'image_inspection_pending') if k in detail},
                 detail_fetched=True,
                 detail_source="jina" if via_jina and detail else "direct",
             )
+            if self.cfg.get('future_flex', {}).get('images_enabled') is True:
+                if detail.get('images_inspected') is True:
+                    self.store.set_fields(tid, future_flex_detail_retry=None)
+                else:
+                    previous = topic.get('future_flex_detail_retry') or {}
+                    self.store.set_fields(tid, future_flex_detail_retry={
+                        'attempts': previous.get('attempts', 0) + 1,
+                        'next_retry': int(time.time()) + max(1, int(self.cfg.get('future_flex', {}).get('detail_backoff_seconds', 60))),
+                    })
+                    self.store.save()
             ok += 1
             consecutive_failures = 0
             if ok % int(cfg_fetch.get("save_every", 5)) == 0:

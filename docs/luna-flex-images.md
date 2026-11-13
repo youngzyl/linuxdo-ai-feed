@@ -1,0 +1,32 @@
+# Luna Flex image screening
+
+## Authorized scope
+
+Use OpenAI Platform `gpt-6-luna`, `reasoning.effort=high`, `service_tier=flex`, with actual OP raster images. No Standard/provider fallback. Enable current/future arrivals and a fixed seven-day historical window of still-unjudged posts; preserve existing verdicts, manual feedback and bookmarks. The effective activation and backfill timestamps must be explicit and persisted.
+
+## Release implementation
+
+The backend source is copied from reviewed archive SHA-256 `a3888df16102ec0ad0b2ef110b94eecec7e7811c9257aa532d116c242866c001`; manifest SHA-256 `4367feb13e9949511b09ca7e5e1c8fdedc530b22992acdbfc48ca2eb8f609bf8`. Frontend assets are intentionally unchanged in this commit.
+
+- Single process writer, locked CAS verdict admission, durable state and receipts, fail-stop after ambiguous atomic persistence.
+- Bound and pin public DNS destinations, verify hostname TLS, validate redirects; exact image hosts include linux.do, cdn.linux.do, cdn.ldstatic.com and cdn3.ldstatic.com. Spawned bounded decoder, raster validation, image count/byte/pixel/time limits.
+- Missing authoritative OP content remains uninspected, not a text-only classification. Detail hydration and image-download retries are distinct; absent metadata does not consume download failures. Fair detail rotation advances only attempted work.
+- Per-request remaining image budget causes deferral, not false quarantine. Genuine incomplete/oversize images remain observable, never silently classified without images.
+- `sv1` historical Batch fingerprints are preserved; Flex additionally fences image metadata changes. Unknown paid responses stop automatic retry and require reconciliation.
+
+## Cancellation reconciliation
+
+The original run `luna-day-1794512882`, provider Batch `batch_6af618167de881908896521940316f52`, was cancelled. Provider GET confirmed terminal `cancelled`, 71 total, zero completed, no output file. Its error file contained exactly the 71 outstanding owner group IDs, all `batch_cancelled`. The owner run was finished as cancelled. Only that reviewed explicit group list is released; the realtime receipt and already-applied verdicts remain protected. The private declaration resides on bwgca; no credentials or article bodies belong in Git.
+
+## Executed checks before final image cutover
+
+- 169 final offline tests passed in the implementation workspace.
+- Earlier same-code service plus spawned decoder under a 256 MiB cgroup: peak 148,455,424 bytes, no OOM, health HTTP 200 before/after. This is a synthetic 1,000-topic test, not proof of unlimited store growth.
+- One real complete image-bearing RSS post was fetched and sent as raster bytes in an authorized test-only request. Provider returned completed, actual `gpt-6-luna` and `flex`, 2,235 input and 172 output tokens. No verdict was applied. This exercised the build immediately before a fairness-only collection change, not the final deployment image.
+- Independent static reviews identified and led to fixes for missing image-source hosts, per-request byte budget handling and hydration starvation. The final hydration/fairness delta was reviewed by the lead.
+
+## Cutover status
+
+Implementation commit only: final image build/config cutover and scheduled production readback must be recorded separately. A passing unit suite or successful image API test is not a claim that the automatic pipeline is deployed.
+
+Rollback uses the compatible candidate image with both filters disabled and the same live state. Never restore an old state snapshot over newer bookmarks or replies, and never use an older image that drops Luna/Flex fields.

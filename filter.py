@@ -438,18 +438,25 @@ class Filter:
             "error": None,
             "finished_at": now_iso(),
         }
-        pending = self.store.pending(limit=limit)
-        if not pending:
-            summary["ok"] = True
-            return summary
         if not key:
+            # There is no model dispatch in this branch; preserve the old no-work
+            # health behavior without requiring dispatch-specific Store methods.
+            if not self.store.pending(limit=limit):
+                return summary
             summary.update(ok=False, batches_failed=0, error="no API key (env commandcode_apikey)")
             self.last_error = summary["error"]
+            return summary
+        pending, _ = self.store.dispatch_pending(limit=limit)
+        if not pending:
+            summary["ok"] = True
             return summary
 
         batch_size = int(cfg.get("batch_size", 8))
         for start in range(0, len(pending), batch_size):
-            batch = pending[start : start + batch_size]
+            selected = pending[start : start + batch_size]
+            batch, expected_filters = self.store.capture_dispatch([t['id'] for t in selected])
+            if not batch:
+                continue
             # immutable dispatch snapshot: versions as of the moment this batch is sent
             snapshot = {int(t["id"]): t.get("source_version") for t in batch}
             try:
@@ -476,7 +483,8 @@ class Filter:
             summary["unjudged"] += len(unjudged)
             for verdict in verdicts:
                 status = self.store.set_verdict(
-                    verdict["topic_id"], verdict, source_version=verdict.get("source_version")
+                    verdict["topic_id"], verdict, source_version=verdict.get("source_version"),
+                    expected_filter=expected_filters[int(verdict["topic_id"])], avoid_luna_reserved=True
                 )
                 if status == "stale":
                     # the bytes moved while the answer was in flight: the topic keeps its

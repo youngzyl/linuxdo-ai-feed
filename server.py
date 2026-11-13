@@ -39,6 +39,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 from config import FIXTURE_DIR, PUBLIC_DIR, allowed_origins, normalize_origin, owner_token
 from store import now_iso
 import learn as learn_mod
+import canary as canary_mod
+import luna_writer as luna_mod
 
 # The path-id contract (CONTRACT.md §1.1): ASCII digits only, at most this many of them. The
 # cap is checked on the raw string, before int(): a longer path (a 4400-digit id, say) is a
@@ -59,6 +61,11 @@ ALLOWED_METHODS = ("GET", "POST", "OPTIONS")
 # Endpoints that need the owner token. Reads of /api/state, /api/topic/<id>, /health,
 # /metrics, /api/queue, the static files and the fixtures stay anonymous.
 OWNER_ROUTES = {
+    ("POST", "/api/luna/snapshot"),
+    ("POST", "/api/luna/apply"),
+    ("POST", "/api/luna/finish"),
+    ("POST", "/api/canary/snapshot"),
+    ("POST", "/api/canary/apply"),
     ("POST", "/api/queue"),
     ("POST", "/api/feedback"),
     ("POST", "/api/refresh"),
@@ -437,6 +444,25 @@ def make_handler(app: App):
             origin = self.headers.get("origin")
             self._cors = self._cors_headers(origin)
             try:
+                lengths = self.headers.get_all("Content-Length") or []
+                if self.headers.get_all("Transfer-Encoding") or len(lengths) > 1 or (lengths and not re.fullmatch(r"[0-9]+", lengths[0])):
+                    self.close_connection = True
+                    return self.error_json(400, "invalid request framing")
+
+                if path.startswith("/api/luna/"):
+                    if method != "POST" or path not in {"/api/luna/snapshot", "/api/luna/apply", "/api/luna/finish"}:
+                        self.close_connection = True
+                        return self.error_json(404, "not found")
+                    if app.cfg.get("luna_enabled") is not True:
+                        self.close_connection = True
+                        return self.error_json(404, "not found")
+                if path.startswith("/api/canary/"):
+                    if method != "POST" or path not in {"/api/canary/snapshot", "/api/canary/apply"}:
+                        self.close_connection = True
+                        return self.error_json(404, "not found")
+                    if not canary_mod.enabled(app.cfg):
+                        self.close_connection = True
+                        return self.error_json(404, "not found")
                 if method == "OPTIONS":
                     return self._preflight(origin)
                 if method not in ALLOWED_METHODS:
@@ -464,7 +490,54 @@ def make_handler(app: App):
                 if (method, path) in OWNER_ROUTES:
                     denial = self._owner_gate(path, origin)
                     if denial is not None:
+                        self.close_connection = True
                         return denial
+                if path in {"/api/luna/snapshot", "/api/luna/apply", "/api/luna/finish"}:
+                    if canary_mod.enabled(app.cfg):
+                        self.close_connection = True
+                        return self.error_json(409, "legacy canary must be disabled")
+                    payload, body_error = self._read_json()
+                    if body_error is not None:
+                        return self.error_json(*body_error)
+                    try:
+                        if path.endswith("/snapshot"):
+                            if set(payload) != {"run_id", "t0"}:
+                                raise luna_mod.Invalid("payload")
+                            result = luna_mod.snapshot(app.store, payload["run_id"], payload["t0"])
+                        elif path.endswith("/finish"):
+                            if set(payload) != {"run_id", "status"}:
+                                raise luna_mod.Invalid("payload")
+                            result = luna_mod.finish(app.store, payload["run_id"], payload["status"])
+                        else:
+                            result = luna_mod.apply(app.store, payload)
+                    except luna_mod.Invalid:
+                        return self.error_json(400, "invalid luna request")
+                    except luna_mod.Conflict:
+                        return self.error_json(409, "luna conflict")
+                    except luna_mod.PersistenceFailure:
+                        return self.error_json(503, "luna persistence failed; outcome may be unknown")
+                    except Exception:
+                        app.log("luna request failed; outcome may be unknown")
+                        return self.error_json(500, "luna request failed; outcome may be unknown")
+                    return self.json_response(200, result)
+                if path in {"/api/canary/snapshot", "/api/canary/apply"}:
+                    payload, body_error = self._read_json()
+                    if body_error is not None:
+                        return self.error_json(*body_error)
+                    try:
+                        if path.endswith("/snapshot"):
+                            if set(payload) != {"run_id"}:
+                                raise canary_mod.Invalid("payload")
+                            result = canary_mod.snapshot(app.store, payload["run_id"])
+                        else:
+                            result = canary_mod.apply(app.store, payload)
+                    except canary_mod.Invalid:
+                        return self.error_json(400, "invalid canary request")
+                    except canary_mod.Conflict:
+                        return self.error_json(409, "canary conflict")
+                    except canary_mod.PersistenceFailure:
+                        return self.error_json(503, "canary persistence failed; outcome may be unknown")
+                    return self.json_response(200, result)
                 if path in ("/", "/index.html"):
                     return self.serve_file(PUBLIC_DIR / "index.html")
                 if path == "/api/state":

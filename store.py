@@ -5,17 +5,20 @@ Single JSON file (data/state.json) written atomically; failure journal is JSONL
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
 import re
 import threading
+import tempfile
 import time
 import unicodedata
 from pathlib import Path
 
 from config import owner_token, redact
 
+_UNSET = object()
 VERSION = 1
 FAILURE_LOG_CAP = 2000  # lines kept on disk
 
@@ -169,6 +172,10 @@ def default_health() -> dict:
     }
 
 
+class StateLoadError(RuntimeError):
+    """Persisted state cannot safely be read; never create an empty replacement."""
+
+
 class Store:
     def __init__(self, path: Path | str, failure_log: Path | str, memory_failures: int = 300):
         self.path = Path(path)
@@ -184,15 +191,52 @@ class Store:
     # ---------------------------------------------------------------- persistence
     def load(self) -> None:
         with self.lock:
-            if self.path.exists():
+            missing = False
+            try:
+                raw = self.path.read_text(encoding="utf-8")
+            except FileNotFoundError as exc:
+                # A dangling symlink is not a new store. Permission errors and
+                # all other failures are refused rather than treated as missing.
                 try:
-                    blob = json.loads(self.path.read_text(encoding="utf-8"))
-                except Exception:
-                    blob = {}
+                    self.path.lstat()
+                except FileNotFoundError:
+                    missing = True
+                except OSError as check_exc:
+                    raise StateLoadError("cannot inspect state path") from check_exc
+                else:
+                    raise StateLoadError("state path exists but is inaccessible") from exc
+            except (OSError, UnicodeError) as exc:
+                raise StateLoadError("cannot read state") from exc
+            if not missing:
+                try:
+                    blob = json.loads(raw)
+                except (ValueError, UnicodeError) as exc:
+                    raise StateLoadError("state is invalid JSON") from exc
+                finally:
+                    del raw
+                if not isinstance(blob, dict):
+                    raise StateLoadError("state root must be an object")
+                if "topics" not in blob:
+                    raise StateLoadError("state lacks topics")
+                for field, expected in (("topics", dict), ("queue", list),
+                                        ("feedback", list), ("health", dict),
+                                        ("canary", dict), ("luna", dict), ("luna_history", dict), ("future_flex", dict)):
+                    if field in blob and not isinstance(blob[field], expected):
+                        raise StateLoadError("invalid state field type: " + field)
+                if any(not isinstance(topic, dict) for topic in blob["topics"].values()):
+                    raise StateLoadError("invalid state topic record")
                 if isinstance(blob, dict):
                     self.data["topics"] = blob.get("topics") or {}
                     self.data["queue"] = [int(x) for x in (blob.get("queue") or [])]
                     self.data["feedback"] = list(blob.get("feedback") or [])
+                    if "canary" in blob:
+                        self.data["canary"] = blob["canary"]
+                    if "luna" in blob:
+                        self.data["luna"] = blob["luna"]
+                    if "luna_history" in blob:
+                        self.data["luna_history"] = blob["luna_history"]
+                    if "future_flex" in blob:
+                        self.data["future_flex"] = blob["future_flex"]
                     health = default_health()
                     health.update(blob.get("health") or {})
                     for section in ("fetch", "filter"):
@@ -204,8 +248,14 @@ class Store:
             self._load_failures()
             self._merge_feedback_journal()
             self._migrate_state()
-        if not self.path.exists():
-            self.save()
+            if missing:
+                # Exclusive create refuses to clobber a file that appeared after
+                # our read; it is only for a genuinely new store.
+                try:
+                    with self.path.open("x", encoding="utf-8") as f:
+                        json.dump(self.data, f, ensure_ascii=False, indent=1)
+                except OSError as exc:
+                    raise StateLoadError("cannot create new state exclusively") from exc
 
     def _merge_feedback_journal(self) -> None:
         """Votes are the one thing here that cannot be re-fetched, so they are appended to
@@ -300,10 +350,23 @@ class Store:
         return None
 
     def save(self) -> None:
+        # Mutation often preceded this call. Any failed save can leave memory and
+        # durable state divergent; no handler thread may continue after failure.
         with self.lock:
-            tmp = self.path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(self.data, ensure_ascii=False, indent=1), encoding="utf-8")
-            os.replace(tmp, self.path)
+            try:
+                fd, name = tempfile.mkstemp(prefix='.state-', dir=str(self.path.parent))
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    json.dump(self.data, f, ensure_ascii=False, indent=1)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(name, self.path)
+                dfd = os.open(str(self.path.parent), os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(dfd)
+                finally:
+                    os.close(dfd)
+            except BaseException:
+                os._exit(70)
 
     def _load_failures(self) -> None:
         self.failures = []
@@ -386,6 +449,41 @@ class Store:
         with self.lock:
             return list(self.data["topics"].values())
 
+    def _luna_reserved_ids(self):
+        run = self.data.get("luna") or {}
+        if run.get("status", "active") != "active":
+            return set()
+        receipts = run.get("receipts") or {}
+        return {str(m.get("id")) for gid, members in (run.get("groups") or {}).items()
+                if gid not in receipts for m in members}
+
+    def _luna_reserved(self, tid):
+        return str(tid) in self._luna_reserved_ids()
+
+    def dispatch_pending(self, limit=None):
+        """Capture prompt bytes and previous verdict atomically with Luna reservation."""
+        with self.lock:
+            reserved = self._luna_reserved_ids()
+            items = [t for t in self.data["topics"].values()
+                     if self.needs_model_verdict(t) and str(t["id"]) not in reserved]
+            items.sort(key=lambda t: (t.get("created_at") or "", int(t["id"])), reverse=True)
+            if limit is not None:
+                items = items[:limit]
+            snapshot = copy.deepcopy(items)
+            expected = {int(t["id"]): copy.deepcopy(t.get("filter")) for t in items}
+            return snapshot, expected
+
+    def capture_dispatch(self, ids):
+        """Re-check each batch immediately before dispatch under the writer lock."""
+        with self.lock:
+            reserved = self._luna_reserved_ids()
+            items = []
+            for tid in ids:
+                topic = self.data["topics"].get(str(tid))
+                if topic and str(tid) not in reserved and self.needs_model_verdict(topic):
+                    items.append(topic)
+            return copy.deepcopy(items), {int(t["id"]): copy.deepcopy(t.get("filter")) for t in items}
+
     def pending(self, limit: int | None = None) -> list[dict]:
         """Topics that still need a model verdict for their current source version.
 
@@ -453,7 +551,8 @@ class Store:
         """Drop the override: the latest model verdict (or pending) is exposed again."""
         return self.set_manual_override(tid, None)
 
-    def set_verdict(self, tid: int | str, verdict: dict, *, source_version: str | None = None) -> str:
+    def set_verdict(self, tid: int | str, verdict: dict, *, source_version: str | None = None,
+                    expected_filter=_UNSET, avoid_luna_reserved=False) -> str:
         """Apply a model verdict. Returns 'applied' | 'stale' | 'unknown_topic'.
 
         The override is untouched here: an explicit keep/skip keeps ruling the display
@@ -469,6 +568,10 @@ class Store:
             current = self._touch_source_version(topic)
             if source_version is not None and source_version != current:
                 return "stale"
+            if expected_filter is not _UNSET and topic.get("filter") != expected_filter:
+                return "stale"
+            if avoid_luna_reserved and self._luna_reserved(tid):
+                return "stale"
             raw_value = verdict.get("valuable")
             topic["filter"] = {
                 "valuable": raw_value if isinstance(raw_value, bool) else None,
@@ -481,6 +584,9 @@ class Store:
                 "source_version": current,
                 "at": now_iso(),
             }
+            for field in ('provider', 'service_tier', 'provenance_assurance'):
+                if isinstance(verdict.get(field), str):
+                    topic['filter'][field] = verdict[field]
             self._refresh_state(topic)
             return "applied"
 
@@ -721,6 +827,17 @@ class Store:
                 "reason": f"fetch failed {health['consecutive_failures']} cycles in a row: {public_error(health.get('last_error')) or '-'}",
                 "kind": "fetch_failing",
             }
+        if cfg.get('filter', {}).get('enabled', True) is False:
+            return {
+                'needed': True,
+                'reason': 'normal filter intentionally disabled; pending items are not automatically judged',
+                'kind': 'filter_disabled',
+            }
+        flex = self.data.get('future_flex') or {}
+        if cfg.get('future_flex', {}).get('enabled') is True and (flex.get('status') == 'auth_disabled' or health['filter'].get('error') in ('unknown', 'outcome_unknown', 'response_invalid')):
+            return {'needed': True, 'reason': 'future flex is disabled after an authentication failure or uncertain outcome', 'kind': 'future_flex_blocked'}
+        if cfg.get('future_flex', {}).get('enabled') is True and health['filter'].get('error') == 'key_unavailable':
+            return {'needed': True, 'reason': 'future flex key file unavailable', 'kind': 'future_flex_no_key'}
         if health["filter_consecutive_errors"] >= filter_threshold:
             return {
                 "needed": True,
@@ -742,11 +859,12 @@ class Store:
         status = "ok"
         if consecutive:
             status = "failing" if att["kind"] == "fetch_failing" else "degraded"
-        elif health.get("fetch", {}).get("ok") is False or health.get("filter", {}).get("ok") is False:
+        elif att['kind'] == 'filter_disabled' or health.get("fetch", {}).get("ok") is False or health.get("filter", {}).get("ok") is False:
             status = "degraded"
         token, _ = owner_token()
         fetch = dict(health.get("fetch") or {})
         filt = dict(health.get("filter") or {})
+        filt['enabled'] = cfg.get('filter', {}).get('enabled', True) is not False
         # public payload: raw upstream text is replaced by a sanitized signature, and the
         # structured summary carries what a monitor actually needs
         fetch["error"] = public_error(fetch.get("error"))

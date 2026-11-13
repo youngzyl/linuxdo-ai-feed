@@ -61,6 +61,7 @@ DEFAULTS: dict = {
         "max_pages": 6,
     },
     "filter": {
+        "enabled": True,
         "base_url": "https://api.commandcode.ai/provider/v1",
         "model": "deepseek/deepseek-v4.1-flash",
         "prompt_version": "v1",
