@@ -834,8 +834,11 @@ class Store:
                 'kind': 'filter_disabled',
             }
         flex = self.data.get('future_flex') or {}
-        if cfg.get('future_flex', {}).get('enabled') is True and (flex.get('status') == 'auth_disabled' or health['filter'].get('error') in ('unknown', 'outcome_unknown', 'response_invalid')):
-            return {'needed': True, 'reason': 'future flex is disabled after an authentication failure or uncertain outcome', 'kind': 'future_flex_blocked'}
+        if cfg.get('future_flex', {}).get('enabled') is True:
+            from flex_health import blocked_attention
+            blocked = blocked_attention(flex, health['filter'].get('error'))
+            if blocked:
+                return blocked
         if cfg.get('future_flex', {}).get('enabled') is True and health['filter'].get('error') == 'key_unavailable':
             return {'needed': True, 'reason': 'future flex key file unavailable', 'kind': 'future_flex_no_key'}
         if health["filter_consecutive_errors"] >= filter_threshold:
@@ -859,7 +862,7 @@ class Store:
         status = "ok"
         if consecutive:
             status = "failing" if att["kind"] == "fetch_failing" else "degraded"
-        elif att['kind'] == 'filter_disabled' or health.get("fetch", {}).get("ok") is False or health.get("filter", {}).get("ok") is False:
+        elif att['kind'] in ('filter_disabled', 'future_flex_auth_disabled', 'future_flex_unknown') or health.get("fetch", {}).get("ok") is False or health.get("filter", {}).get("ok") is False:
             status = "degraded"
         token, _ = owner_token()
         fetch = dict(health.get("fetch") or {})

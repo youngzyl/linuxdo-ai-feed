@@ -65,7 +65,7 @@ class Tests(unittest.TestCase):
  def test_auth_403_disables(self):
   self.add(10,self.stamp(self.now-1),self.stamp(self.now-1))
   def auth(*a):raise FlexError('auth_rejected',403)
-  f=FutureFlex(self.cfg,self.store,lambda x:None,transport=auth,clock=lambda:self.now);self.assertFalse(f.run()['ok']);self.assertEqual(self.store.data['future_flex']['status'],'auth_disabled');self.assertEqual(self.store.attention(self.cfg)['kind'],'future_flex_blocked')
+  f=FutureFlex(self.cfg,self.store,lambda x:None,transport=auth,clock=lambda:self.now);self.assertFalse(f.run()['ok']);self.assertEqual(self.store.data['future_flex']['status'],'auth_disabled');self.assertEqual(self.store.attention(self.cfg)['kind'],'future_flex_auth_disabled')
  def test_pipeline_selects_future_provider_and_not_legacy(self):
   import config,time
   from pipeline import Pipeline

@@ -66,6 +66,7 @@ OWNER_ROUTES = {
     ("POST", "/api/luna/finish"),
     ("POST", "/api/canary/snapshot"),
     ("POST", "/api/canary/apply"),
+    ("POST", "/api/future-flex/recover"),
     ("POST", "/api/queue"),
     ("POST", "/api/feedback"),
     ("POST", "/api/refresh"),
@@ -471,6 +472,10 @@ def make_handler(app: App):
                     )
                 if path == "/api/refresh" and method != "POST":
                     return self._method_not_allowed("POST")
+                if path == "/api/future-flex/recover" and method != "POST":
+                    if self._body_declared():
+                        self.close_connection = True
+                    return self._method_not_allowed("POST, OPTIONS")
                 # Method policy for the raw owner reads (lead-authored): /api/failures answers
                 # only the effective GET (do_HEAD maps to GET) and OPTIONS. Every other
                 # dispatched method is refused HERE - before the owner gate and before any
@@ -492,6 +497,20 @@ def make_handler(app: App):
                     if denial is not None:
                         self.close_connection = True
                         return denial
+                if path == "/api/future-flex/recover":
+                    from future_flex import FutureFlex, FlexError
+                    flex = getattr(app.pipeline, "filter", None)
+                    if not isinstance(flex, FutureFlex):
+                        self.close_connection = True
+                        return self.error_json(404, "future flex unavailable")
+                    payload, body_error = self._read_json()
+                    if body_error is not None:
+                        return self.error_json(*body_error)
+                    try:
+                        result = flex.recover(payload)
+                    except FlexError as exc:
+                        return self.error_json(400 if exc.code == 'invalid_request' else 409, exc.code)
+                    return self.json_response(200, result)
                 if path in {"/api/luna/snapshot", "/api/luna/apply", "/api/luna/finish"}:
                     if canary_mod.enabled(app.cfg):
                         self.close_connection = True
