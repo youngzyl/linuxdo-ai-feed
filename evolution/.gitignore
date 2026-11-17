@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+*.tar.gz
+validation-logs/
+daily-runs/
+operator-canary-runs/
+experiment-receipts/
+openevolve_output/
+.sandbox-cleanup-blocked
