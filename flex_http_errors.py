@@ -66,8 +66,9 @@ def classify_http_error(status, body=None):
         error_type = error.get('type') if isinstance(error, dict) else None
     except (ValueError, UnicodeError, RecursionError):
         return 'outcome_unknown'
-    if code in ('insufficient_quota','credit_balance_exhausted','organization_spend_limit_exceeded','project_spend_limit_exceeded') or error_type == 'insufficient_quota':
+    quota_codes = ('insufficient_quota','credit_balance_exhausted','organization_spend_limit_exceeded','project_spend_limit_exceeded')
+    if code in quota_codes or error_type in quota_codes:
         return 'quota_exhausted'
-    if code in ('rate_limit_exceeded', 'resource_exhausted', 'resource_unavailable'):
+    if code in ('rate_limit_exceeded', 'resource_exhausted', 'resource_unavailable', 'flex_unavailable') or error_type == 'resource_unavailable':
         return 'rate_limited'
     return 'outcome_unknown'

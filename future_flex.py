@@ -149,7 +149,7 @@ class FutureFlex:
  def recover(self,payload):
   import copy, re
   if (not isinstance(payload,dict) or set(payload)!={'action','expected_pending_ids','expected_attempt_digest'} or
-      payload['action']!='quarantine_uncertain' or not isinstance(payload['expected_pending_ids'],list) or
+      payload['action'] not in ('quarantine_uncertain','retry_proven_resource') or not isinstance(payload['expected_pending_ids'],list) or
       not payload['expected_pending_ids'] or any(type(x) is not int or x<=0 for x in payload['expected_pending_ids']) or
       len(set(payload['expected_pending_ids']))!=len(payload['expected_pending_ids']) or
       not isinstance(payload['expected_attempt_digest'],str) or not re.fullmatch(r'[0-9a-f]{64}',payload['expected_attempt_digest'])):
@@ -158,15 +158,28 @@ class FutureFlex:
   try:
    with self.store.lock:
     m=self.store.data['future_flex'];receipt=m.get('recovery_receipt') or {}
-    if (m.get('status')=='ready' and m.get('pending_ids')==[] and
+    replay_status=('backoff','ready') if payload['action']=='retry_proven_resource' else ('ready',)
+    if (m.get('status') in replay_status and m.get('pending_ids')==[] and
         receipt.get('request')==payload and receipt.get('last_attempt')==m.get('last_attempt')):
      return {'ok':True,'receipt':copy.deepcopy(receipt),'idempotent':True}
     if (m.get('status')!='unknown' or m.get('pending_ids')!=payload['expected_pending_ids'] or
         attempt_digest(m)!=payload['expected_attempt_digest']):raise FlexError('conflict')
     ids=payload['expected_pending_ids']
     receipt={'request':copy.deepcopy(payload),'last_attempt':copy.deepcopy(m.get('last_attempt')),'old_status':m['status'],'recovered_at':now_iso()}
-    m.update(status='ready',pending_ids=[],excluded_ids=sorted(set(m['excluded_ids'])|set(ids)),
-             quarantined_ids=sorted(set(m.get('quarantined_ids') or [])|set(ids)),recovery_receipt=receipt)
+    if payload['action']=='retry_proven_resource':
+     d=m.get('diagnostic')
+     if (not isinstance(d,dict) or type(d.get('http_status')) is not int or d.get('http_status')!=429 or d.get('body_read_complete') is not True or d.get('json_shape')!='object_error_object' or d.get('phase')!='dispatch' or not m.get('last_attempt') or d.get('request_nonce')!=m.get('last_attempt')):raise FlexError('conflict')
+     code=d.get('error_code');kind=d.get('error_type')
+     safe=lambda x:isinstance(x,str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,96}',x,flags=re.ASCII) is not None
+     if ((code is not None and not safe(code)) or (kind is not None and not safe(kind)) or
+         not (code=='flex_unavailable' or kind=='resource_unavailable') or
+         classify_http_error(429,json.dumps({'error':{'code':code,'type':kind}}).encode())!='rate_limited'):raise FlexError('conflict')
+     receipt.update(old_diagnostic=copy.deepcopy(d),action=payload['action'])
+     delay=min(3600,max(1,int(self.cfg.get('backoff_seconds',60))))
+     m.update(status='backoff',next_retry=int(self.clock())+delay,pending_ids=[],recovery_receipt=receipt)
+    else:
+     m.update(status='ready',pending_ids=[],excluded_ids=sorted(set(m['excluded_ids'])|set(ids)),
+              quarantined_ids=sorted(set(m.get('quarantined_ids') or [])|set(ids)),recovery_receipt=receipt)
     self.store.save()
     return {'ok':True,'receipt':copy.deepcopy(receipt),'idempotent':False}
   finally:self.lock.release()

@@ -8,6 +8,15 @@ class HttpErrorClassificationTests(unittest.TestCase):
     def test_flex_resource_unavailable_is_retryable(self):
         self.assertEqual(classify_http_error(429, b'{"error":{"code":"resource_unavailable"}}'), 'rate_limited')
 
+    def test_exact_flex_unavailable_fixture_and_quota_precedence(self):
+        for error, expected in (({'code': 'flex_unavailable', 'type': 'resource_unavailable'}, 'rate_limited'),
+                                ({'code': 'flex_unavailable'}, 'rate_limited'),
+                                ({'type': 'resource_unavailable'}, 'rate_limited'),
+                                ({'code': 'insufficient_quota', 'type': 'resource_unavailable'}, 'quota_exhausted'),
+                                ({'code': 'flex_unavailable', 'type': 'insufficient_quota'}, 'quota_exhausted')):
+            with self.subTest(error=error):
+                self.assertEqual(classify_http_error(429, json.dumps({'error': error}).encode()), expected)
+
     def test_quota_and_resource_429_codes(self):
         for code, expected in (('insufficient_quota', 'quota_exhausted'),
                                ('rate_limit_exceeded', 'rate_limited'),

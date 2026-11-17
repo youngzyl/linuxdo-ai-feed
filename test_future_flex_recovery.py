@@ -176,5 +176,75 @@ class FutureFlexRecoveryTests(unittest.TestCase):
         self.assertEqual(self.request(body)[0], 409)
 
 
+    def test_resource_retry_is_atomic_persistent_and_idempotent(self):
+        meta = self.store.data['future_flex']
+        diagnostic = {'http_status': 429, 'body_read_complete': True,
+                      'phase': 'dispatch', 'request_nonce': meta['last_attempt'],
+                      'json_shape': 'object_error_object', 'error_code': 'flex_unavailable', 'error_type': 'resource_unavailable'}
+        meta['quarantined_ids'] = list(range(100,116))
+        meta['excluded_ids'] = list(range(100,116))
+        meta['diagnostic'] = copy.deepcopy(diagnostic)
+        body = dict(self.payload(), action='retry_proven_resource')
+        excluded = copy.deepcopy(meta['excluded_ids'])
+        with mock.patch.object(self.store, 'save', wraps=self.store.save) as save:
+            status, result = self.request(body)
+            self.assertEqual(status, 200, result)
+            self.assertEqual(save.call_count, 1)
+            self.assertEqual(self.request(body)[0], 200)
+            self.assertEqual(save.call_count, 1)
+        self.assertEqual(meta['status'], 'backoff')
+        self.assertEqual(meta['next_retry'], 260)
+        self.assertEqual(meta['pending_ids'], [])
+        self.assertEqual(meta['excluded_ids'], excluded)
+        self.assertEqual(meta.get('quarantined_ids'), list(range(100,116)))
+        self.assertEqual(result['receipt']['old_diagnostic'], diagnostic)
+        self.assertEqual(result['receipt']['old_status'], 'unknown')
+        self.assertEqual(result['receipt']['action'], body['action'])
+        self.assertEqual(Store(self.store.path, self.store.failure_log).data['future_flex'], meta)
+        self.assertEqual(self.flex.run()['error'], 'rate_backoff')
+        meta['status'] = 'ready'
+        self.assertTrue(self.request(body)[1]['idempotent'])
+        meta['status'] = 'backoff'
+        self.flex.clock = lambda: 260
+        prior = len(self.calls)
+        self.assertEqual(self.flex.run()['error'], 'outcome_unknown')
+        self.assertEqual(len(self.calls), prior + 1)
+        self.assertEqual(set(self.calls[-1]), set(body['expected_pending_ids']))
+        self.assertEqual(self.flex.run()['error'], 'unknown')
+        self.assertEqual(len(self.calls), prior + 1)
+        self.assertEqual(self.request(body)[0], 409)
+
+    def test_resource_retry_requires_complete_unambiguous_proof(self):
+        meta = self.store.data['future_flex']
+        body = dict(self.payload(), action='retry_proven_resource')
+        good = {'http_status': 429, 'body_read_complete': True, 'phase': 'dispatch',
+                'request_nonce': meta['last_attempt'], 'json_shape': 'object_error_object', 'error_type': 'resource_unavailable'}
+        invalid = [None, {}, dict(good, http_status=500), dict(good, body_read_complete=False),
+                   dict(good, phase='validation'), dict(good, request_nonce='other'),
+                   dict(good, json_shape='object_other'), dict(good, error_type='other'),
+                   dict(good, error_code='insufficient_quota'),
+                   dict(good, error_code='project_spend_limit_exceeded'),
+                   dict(good, error_code='bad secret'),
+                   dict(good, error_code='flex_unavailable', error_type='insufficient_quota')]
+        for diagnostic in invalid:
+            with self.subTest(diagnostic=diagnostic):
+                meta['diagnostic'] = diagnostic
+                before = copy.deepcopy(meta)
+                self.assertEqual(self.request(body)[0], 409)
+                self.assertEqual(meta, before)
+        meta['diagnostic'] = good
+        before = copy.deepcopy(meta)
+        self.assertIn(self.request(body, 'wrong')[0], (401, 403))
+        self.assertEqual(self.request(dict(body, expected_attempt_digest='0'*64))[0], 409)
+        self.assertEqual(self.request(dict(body, expected_pending_ids=[999]))[0], 409)
+        self.flex.lock.acquire()
+        try:
+            self.assertEqual(self.request(body)[0], 409)
+        finally:
+            self.flex.lock.release()
+        self.assertEqual(meta, before)
+        self.assertEqual(self.request(body)[0], 200)
+
+
 if __name__ == '__main__':
     unittest.main()
