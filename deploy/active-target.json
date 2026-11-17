@@ -12,7 +12,7 @@
   "service_path": "/home/youngzyl/services/linuxdo-ai",
   "compose_service": "feed",
   "compose_env_file": "compose.env",
-  "image": "linuxdo-ai-feed:tcstw-migration-caf2efe",
-  "image_id": "sha256:a6ea511f74b8e824328465782f89c89b6cc91e745f7238b9e3aeb21654fe4aed",
-  "source_commit": "caf2efeb791be60c1c037e3ea3be0dee28d6049b"
+  "image": "sha256:940885cf239a303d333a4a29577e733421befa2e8738369407d18d30fb51d1aa",
+  "image_id": "sha256:940885cf239a303d333a4a29577e733421befa2e8738369407d18d30fb51d1aa",
+  "source_commit": "d1dbdd1c7d49573e7ec0e24fe1ff07dc99d9b2e0"
 }
