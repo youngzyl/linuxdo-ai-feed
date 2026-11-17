@@ -4,9 +4,9 @@ from decimal import Decimal,InvalidOperation
 from filter import SYSTEM_PROMPT,build_user_prompt_with_taste,normalize_batch
 from store import source_fingerprint,now_iso
 import learn
-from flex_http_errors import classify_http_error,MAX_ERROR_BODY
+from flex_http_errors import classify_http_error,diagnostic_429,MAX_ERROR_BODY
 class FlexError(Exception):
- def __init__(self,code,status=None):self.code=code;self.status=status;super().__init__(code)
+ def __init__(self,code,status=None,diagnostic=None):self.code=code;self.status=status;self.diagnostic=diagnostic;super().__init__(code)
 def response_format(count):
  if type(count) is not int or not 1<=count<=8:raise ValueError('invalid_batch_size')
  fields={'i':{'type':'integer'},'valuable':{'type':'boolean'},'score':{'type':'integer'},'category':{'type':'string'},'reason':{'type':'string'},'summary':{'type':'string'}}
@@ -72,9 +72,15 @@ def request(batch,taste,key,image_parts=None,request_nonce=None):
   c.request('POST','/v1/responses',body=raw,headers=headers);r=c.getresponse()
   if r.status!=200:
    if r.status==429:
-    try:errbody=r.read(MAX_ERROR_BODY+1)
-    except Exception:errbody=None
-    raise FlexError(classify_http_error(429,errbody),429)
+    errbody=None;complete=False
+    try:
+     initial_length=r.length
+     errbody=r.read(MAX_ERROR_BODY+1)
+     complete=(isinstance(errbody,bytes) and len(errbody)<=MAX_ERROR_BODY and r.isclosed() is True and
+               (initial_length is None or (type(initial_length) is int and initial_length==len(errbody))) and
+               (r.length is None or r.length==0))
+    except Exception:pass
+    raise FlexError(classify_http_error(429,errbody if complete else None),429,diagnostic_429(errbody,complete)) from None
    if r.status in (400,401,403,413):raise FlexError(classify_http_error(r.status),r.status)
    raise FlexError('outcome_unknown',r.status)
   try:b=r.read(8000001)
@@ -289,6 +295,16 @@ class FutureFlex:
     m=store.data['future_flex']
     m['last_error_code']=code if code in ('rate_limited','quota_exhausted','auth_rejected','http_rejected','response_invalid','outcome_unknown') else 'outcome_unknown'
     d=m['diagnostic'];d['code']=m['last_error_code'];status=e.status if isinstance(e,FlexError) else None;d['http_status']=status if type(status) is int and 100<=status<=599 else None
+    if isinstance(e,FlexError) and status==429 and isinstance(e.diagnostic,dict):
+     x=e.diagnostic
+     if type(x.get('body_read_complete')) is bool:d['body_read_complete']=x['body_read_complete']
+     if x.get('body_length') is None or (type(x.get('body_length')) is int and 0<=x['body_length']<=MAX_ERROR_BODY+1):d['body_length']=x.get('body_length')
+     h=x.get('body_sha256')
+     if h is None or (isinstance(h,str) and re.fullmatch(r'[a-f0-9]{64}',h)):d['body_sha256']=h
+     if x.get('json_shape') in ('unavailable','invalid_json','non_object','object_error_object','object_other'):d['json_shape']=x['json_shape']
+     for k in ('error_code','error_type'):
+      v=x.get(k)
+      if isinstance(v,str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,96}',v,flags=re.ASCII):d[k]=v
     if code=='rate_limited':m.update(status='backoff',next_retry=int(self.clock())+max(1,int(self.cfg.get('backoff_seconds',60))))
     elif code=='auth_rejected':m.update(status='auth_disabled')
     elif code=='quota_exhausted':m.update(status='billing_disabled')

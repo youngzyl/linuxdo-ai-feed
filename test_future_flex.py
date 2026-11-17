@@ -47,6 +47,7 @@ class Tests(unittest.TestCase):
   import future_flex as ff
   from unittest.mock import MagicMock
   c=MagicMock();c.getresponse.return_value.status=429;c.getresponse.return_value.read.return_value=b'{"error":{"code":"rate_limit_exceeded"}}'
+  c.getresponse.return_value.length=None;c.getresponse.return_value.isclosed.return_value=True
   with patch.object(ff.http.client,'HTTPSConnection',return_value=c) as fac:
    with self.assertRaises(FlexError) as e:ff.request([{'id':1}], '', 'synthetic')
   self.assertEqual(e.exception.code,'rate_limited');fac.assert_called_once_with('api.openai.com',443,timeout=900);self.assertEqual(c.request.call_count,1)

@@ -4,6 +4,8 @@
 establish whether the rejection is temporary, quota-related, or ambiguous.
 """
 import json
+import hashlib
+import re
 
 MAX_ERROR_BODY = 65536
 
@@ -15,6 +17,32 @@ def _unique_object(pairs):
             raise ValueError('duplicate key')
         result[key] = value
     return result
+
+
+def diagnostic_429(body, complete):
+    """Describe only observed bytes; partial hashes/lengths are not whole-body values."""
+    d = {'body_read_complete': bool(complete),
+         'body_length': len(body) if isinstance(body, bytes) else None,
+         'body_sha256': hashlib.sha256(body).hexdigest() if isinstance(body, bytes) else None,
+         'json_shape': 'unavailable'}
+    if not complete:
+        return d
+    try:
+        obj = json.loads(body, object_pairs_hook=_unique_object)
+    except (ValueError, UnicodeError, RecursionError):
+        d['json_shape'] = 'invalid_json'
+        return d
+    if not isinstance(obj, dict):
+        d['json_shape'] = 'non_object'
+        return d
+    error = obj.get('error')
+    d['json_shape'] = 'object_error_object' if isinstance(error, dict) else 'object_other'
+    if isinstance(error, dict):
+        for field in ('code', 'type'):
+            value = error.get(field)
+            if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,96}', value, flags=re.ASCII):
+                d['error_' + field] = value
+    return d
 
 
 def classify_http_error(status, body=None):
