@@ -12,7 +12,7 @@
   "service_path": "/home/youngzyl/services/linuxdo-ai",
   "compose_service": "feed",
   "compose_env_file": "compose.env",
-  "image": "sha256:940885cf239a303d333a4a29577e733421befa2e8738369407d18d30fb51d1aa",
-  "image_id": "sha256:940885cf239a303d333a4a29577e733421befa2e8738369407d18d30fb51d1aa",
-  "source_commit": "d1dbdd1c7d49573e7ec0e24fe1ff07dc99d9b2e0"
+  "image": "sha256:98a2725b1c96de54a85bdb5061d47daab7b98c1a0bd8e80746726163c222e098",
+  "image_id": "sha256:98a2725b1c96de54a85bdb5061d47daab7b98c1a0bd8e80746726163c222e098",
+  "source_commit": "5589466d6cfc561f8940bf7c10b1813c3b45b92a"
 }
