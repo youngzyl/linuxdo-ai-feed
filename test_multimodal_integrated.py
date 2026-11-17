@@ -147,7 +147,7 @@ class MultimodalTests(unittest.TestCase):
   self.add();self.s.set_fields(1,images=[],images_omitted=0,images_inspected=True)
   p=Pipeline(cfg,self.s,lambda _:None);p.cycle_lock=CycleLock(self.p/'cycle');clock=[self.now];p.filter.clock=lambda:clock[0]
   p.collector.categories=[1];p.collector.fetch_list=lambda pages=None:{'topics':[],'pages':1,'page_errors':[]}
-  conn=MagicMock();conn.getresponse.return_value.status=429;conn.getresponse.return_value.read.return_value=b'limited'
+  conn=MagicMock();conn.getresponse.return_value.status=429;conn.getresponse.return_value.read.return_value=b'{"error":{"code":"rate_limit_exceeded"}}'
   with patch('future_flex.http.client.HTTPSConnection',return_value=conn):
    for n in (1,2):
     result=p.run_cycle(do_detail=False)['filter'];self.assertFalse(result['ok']);self.assertEqual(result['error'],'rate_limited');self.assertEqual(self.s.data['health']['filter_consecutive_errors'],n);clock[0]+=2

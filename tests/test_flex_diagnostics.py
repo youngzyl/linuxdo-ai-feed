@@ -39,3 +39,21 @@ class DiagnosticTests(FlexTests):
   c=MagicMock();c.getresponse.return_value.status=200;c.getresponse.return_value.read.return_value=b'{}'
   with patch('future_flex.http.client.HTTPSConnection',return_value=c):request([{'id':1}],'','synthetic',request_nonce='a'*32)
   self.assertEqual(c.request.call_args.kwargs['headers']['X-Client-Request-Id'],'a'*32)
+
+ def test_known_http_status_survives_broken_error_body(self):
+  for status,code in ((408,'outcome_unknown'),(500,'outcome_unknown'),(429,'outcome_unknown'),(403,'auth_rejected')):
+   with self.subTest(status=status):
+    c=MagicMock();c.getresponse.return_value.status=status;c.getresponse.return_value.read.side_effect=TimeoutError('sensitive')
+    with patch('future_flex.http.client.HTTPSConnection',return_value=c):
+     with self.assertRaises(FlexError) as caught:request([{'id':1}],'','synthetic')
+    self.assertEqual((caught.exception.code,caught.exception.status),(code,status))
+
+ def test_incomplete_reason_recorded_without_replay(self):
+  self.add(10,self.stamp(self.now-1),self.stamp(self.now-1))
+  def provider(*args):
+   body=self.provider(*args);body.update(id='resp_abc123',status='incomplete',incomplete_details={'reason':'max_output_tokens'});return body
+  f=FutureFlex(self.cfg,self.store,lambda x:None,transport=provider,clock=lambda:self.now)
+  self.assertEqual(f.run()['error'],'response_invalid')
+  d=Store(self.store.path,self.store.failure_log).data['future_flex']['diagnostic']
+  self.assertEqual((d['response_status'],d['incomplete_reason']),('incomplete','max_output_tokens'))
+  self.assertEqual(f.run()['error'],'unknown')

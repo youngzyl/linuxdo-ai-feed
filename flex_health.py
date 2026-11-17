@@ -8,6 +8,12 @@ def blocked_attention(flex, filter_error):
     if status == 'auth_disabled' or (status is None and filter_error == 'auth_disabled'):
         kind, reason, default = 'future_flex_auth_disabled', 'future flex authentication rejected; dispatch disabled', 'auth_rejected'
         allowed = {'auth_rejected'}
+    elif status == 'billing_disabled' or (status is None and filter_error == 'billing_disabled'):
+        kind, reason, default = 'future_flex_billing_disabled', 'future flex quota exhausted; dispatch disabled', 'quota_exhausted'
+        allowed = {'quota_exhausted'}
+    elif status == 'configuration_rejected' or (status is None and filter_error == 'configuration_rejected'):
+        kind, reason, default = 'future_flex_configuration_rejected', 'future flex request rejected; dispatch disabled', 'http_rejected'
+        allowed = {'http_rejected'}
     elif status == 'unknown' or (status is None and filter_error in ('unknown', 'outcome_unknown', 'response_invalid')):
         kind, reason, default = 'future_flex_unknown', 'future flex dispatch outcome uncertain; dispatch blocked', 'outcome_unknown'
         allowed = {'outcome_unknown', 'response_invalid', 'http_rejected'}

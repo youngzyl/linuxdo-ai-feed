@@ -46,10 +46,10 @@ class Tests(unittest.TestCase):
  def test_actual_wire_contract_and_no_retry(self):
   import future_flex as ff
   from unittest.mock import MagicMock
-  c=MagicMock();c.getresponse.return_value.status=429;c.getresponse.return_value.read.return_value=b'{}'
+  c=MagicMock();c.getresponse.return_value.status=429;c.getresponse.return_value.read.return_value=b'{"error":{"code":"rate_limit_exceeded"}}'
   with patch.object(ff.http.client,'HTTPSConnection',return_value=c) as fac:
    with self.assertRaises(FlexError) as e:ff.request([{'id':1}], '', 'synthetic')
-  self.assertEqual(e.exception.code,'rate_limited');fac.assert_called_once_with('api.openai.com',443,timeout=210);self.assertEqual(c.request.call_count,1)
+  self.assertEqual(e.exception.code,'rate_limited');fac.assert_called_once_with('api.openai.com',443,timeout=900);self.assertEqual(c.request.call_count,1)
   body=json.loads(c.request.call_args.kwargs['body']);self.assertEqual(body['model'],'gpt-6-luna');self.assertEqual(body['service_tier'],'flex');self.assertEqual(body['reasoning'],{'effort':'high'});self.assertFalse(body['store']);self.assertNotIn('tools',body)
  def test_simultaneous_dispatch_no_overlap(self):
   self.add(10,self.stamp(self.now-1),self.stamp(self.now-1));entered=threading.Event();release=threading.Event();calls=[]
